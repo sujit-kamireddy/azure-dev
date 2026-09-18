@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -222,7 +223,7 @@ func TestFinetuneClientSurfacesHTTPErrors(t *testing.T) {
 		t.Fatal("expected an error for HTTP 400")
 	}
 	wrapped := finetuneServiceError(err)
-	serviceErr, ok := wrapped.(*azdext.ServiceError)
+	serviceErr, ok := errors.AsType[*azdext.ServiceError](wrapped)
 	if !ok {
 		t.Fatalf("expected a *azdext.ServiceError, got %T", wrapped)
 	}

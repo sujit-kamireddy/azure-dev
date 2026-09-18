@@ -151,17 +151,17 @@ func resolveTrainingFile(raw string) (string, error) {
 	trainingFile := strings.TrimSpace(raw)
 	if trainingFile == "" {
 		return "", &azdext.LocalError{
-			Message:  "A non-empty training file ID is required for train.",
-			Code:     "rle_train_training_file_required",
-			Category: azdext.LocalErrorCategoryUser,
+			Message:    "A non-empty training file ID is required for train.",
+			Code:       "rle_train_training_file_required",
+			Category:   azdext.LocalErrorCategoryUser,
 			Suggestion: "Upload a training file to the fine-tuning resource, then pass its file-... ID using --training-file.",
 		}
 	}
 	if !strings.HasPrefix(trainingFile, "file-") {
 		return "", &azdext.LocalError{
-			Message:  "The training file must be a file-... ID.",
-			Code:     "rle_invalid_training_file",
-			Category: azdext.LocalErrorCategoryUser,
+			Message:    "The training file must be a file-... ID.",
+			Code:       "rle_invalid_training_file",
+			Category:   azdext.LocalErrorCategoryUser,
 			Suggestion: "Use the ID of a training file uploaded to the fine-tuning resource.",
 		}
 	}
