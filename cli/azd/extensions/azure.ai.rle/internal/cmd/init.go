@@ -879,7 +879,7 @@ func initHarnessSampleNextSteps(displayDir string, goos string, shell string) st
 		rleDir,
 		rleDir,
 		setEnvironment,
-		displayDir,
+		rleDir,
 		agentDir,
 	)
 }
