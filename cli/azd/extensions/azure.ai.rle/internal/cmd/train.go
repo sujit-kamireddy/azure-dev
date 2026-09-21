@@ -87,11 +87,6 @@ func (a *trainAction) Run() error {
 		return err
 	}
 
-	endpoint, err := resolveFinetuneEndpoint(a.flags.endpoint)
-	if err != nil {
-		return err
-	}
-
 	projectEndpoint, err := resolveFoundryProjectEndpoint()
 	if err != nil {
 		return err
@@ -112,6 +107,10 @@ func (a *trainAction) Run() error {
 		return err
 	}
 
+	endpoint, err := resolveFinetuneEndpoint(a.flags.endpoint, projectEndpoint)
+	if err != nil {
+		return err
+	}
 	client, err := createFinetuneClient(endpoint)
 	if err != nil {
 		return err

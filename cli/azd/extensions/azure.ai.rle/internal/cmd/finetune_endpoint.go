@@ -12,17 +12,20 @@ import (
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 )
 
-// finetuneEndpointEnvVar points at the Azure OpenAI resource that hosts the fine-tuning
-// API (POST /openai/v1/fine_tuning/jobs), e.g. https://<resource>.openai.azure.com. This
-// is a different resource than the Foundry project targeted by FOUNDRY_PROJECT_ENDPOINT.
+// finetuneEndpointEnvVar optionally overrides the Azure OpenAI resource that hosts the
+// fine-tuning API (POST /openai/v1/fine_tuning/jobs), e.g. https://<resource>.openai.azure.com.
+// When it is unset, train derives that resource endpoint from FOUNDRY_PROJECT_ENDPOINT.
 const finetuneEndpointEnvVar = "AZD_AI_RLE_TRAIN_ENDPOINT"
 
-func resolveFinetuneEndpoint(flagValue string) (string, error) {
+func resolveFinetuneEndpoint(flagValue string, projectEndpoint string) (string, error) {
 	raw := strings.TrimSpace(flagValue)
 	if raw == "" {
 		raw = strings.TrimSpace(os.Getenv(finetuneEndpointEnvVar))
 	}
-	if raw == "" {
+	if raw != "" {
+		return normalizeFinetuneEndpoint(raw)
+	}
+	if strings.TrimSpace(projectEndpoint) == "" {
 		return "", &azdext.LocalError{
 			Message:  "A fine-tuning API endpoint is required for train.",
 			Code:     "rle_train_endpoint_required",
@@ -33,7 +36,26 @@ func resolveFinetuneEndpoint(flagValue string) (string, error) {
 			),
 		}
 	}
-	return normalizeFinetuneEndpoint(raw)
+
+	return finetuneEndpointFromProject(projectEndpoint)
+}
+
+func finetuneEndpointFromProject(projectEndpoint string) (string, error) {
+	normalizedProjectEndpoint, err := normalizeFoundryProjectEndpoint(projectEndpoint)
+	if err != nil {
+		return "", err
+	}
+
+	projectURL, err := url.Parse(normalizedProjectEndpoint)
+	if err != nil {
+		return "", invalidFinetuneEndpointError(fmt.Sprintf("invalid Foundry project endpoint: %v", err))
+	}
+	resourceName := strings.TrimSuffix(projectURL.Hostname(), ".services.ai.azure.com")
+	if resourceName == "" {
+		return "", invalidFinetuneEndpointError("Foundry project endpoint must include an Azure AI resource name")
+	}
+
+	return normalizeFinetuneEndpoint("https://" + resourceName + ".openai.azure.com")
 }
 
 func normalizeFinetuneEndpoint(raw string) (string, error) {

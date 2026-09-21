@@ -144,7 +144,10 @@ func TestResolveLocalFilePath(t *testing.T) {
 func TestResolveFinetuneEndpointPrefersFlagOverEnvVar(t *testing.T) {
 	t.Setenv(finetuneEndpointEnvVar, "https://from-env.openai.azure.com")
 
-	endpoint, err := resolveFinetuneEndpoint("https://from-flag.openai.azure.com")
+	endpoint, err := resolveFinetuneEndpoint(
+		"https://from-flag.openai.azure.com",
+		"https://project.services.ai.azure.com/api/projects/project",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +159,10 @@ func TestResolveFinetuneEndpointPrefersFlagOverEnvVar(t *testing.T) {
 func TestResolveFinetuneEndpointFallsBackToEnvVar(t *testing.T) {
 	t.Setenv(finetuneEndpointEnvVar, "https://from-env.openai.azure.com/")
 
-	endpoint, err := resolveFinetuneEndpoint("")
+	endpoint, err := resolveFinetuneEndpoint(
+		"",
+		"https://project.services.ai.azure.com/api/projects/project",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,10 +171,25 @@ func TestResolveFinetuneEndpointFallsBackToEnvVar(t *testing.T) {
 	}
 }
 
+func TestResolveFinetuneEndpointDerivesFromFoundryProject(t *testing.T) {
+	t.Setenv(finetuneEndpointEnvVar, "")
+
+	endpoint, err := resolveFinetuneEndpoint(
+		"",
+		"https://ksujit-rle-tip-resource.services.ai.azure.com/api/projects/ksujit-rle-tip/",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint != "https://ksujit-rle-tip-resource.openai.azure.com" {
+		t.Fatalf("expected endpoint derived from Foundry project resource, got %q", endpoint)
+	}
+}
+
 func TestResolveFinetuneEndpointRequiresValue(t *testing.T) {
 	t.Setenv(finetuneEndpointEnvVar, "")
 
-	_, err := resolveFinetuneEndpoint("")
+	_, err := resolveFinetuneEndpoint("", "")
 	if err == nil || !strings.Contains(err.Error(), "A fine-tuning API endpoint is required") {
 		t.Fatalf("expected missing endpoint error, got %v", err)
 	}
