@@ -583,6 +583,18 @@ file. The extension uploads it to the selected fine-tuning resource with the
 Use `--endpoint` to target a different fine-tuning resource for a single
 invocation.
 
+`--options-file` takes a JSON file of training options, applied to this job
+only:
+
+```json
+{ "learning_rate": 4e-05, "max_steps": 30, "group_size": 4, "batch_size": 1 }
+```
+
+The names are validated by the service, which rejects an unknown one rather than
+dropping it -- a typo that was quietly ignored would produce a job that trained
+on defaults while its record claimed otherwise. The error lists every accepted
+name.
+
 ## List RLE-backed fine-tuning jobs (experimental)
 
 `azd ai rle jobs` lists fine-tuning jobs that use the `rl_environment` method.
