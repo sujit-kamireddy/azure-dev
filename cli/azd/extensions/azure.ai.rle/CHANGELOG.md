@@ -22,6 +22,23 @@
 
 ## 0.8.14-preview
 
+- The rollout dashboard now draws the loss mask and the log probability plot
+  at the width it is actually given. Both were authored against a fixed
+  800-unit viewBox and scaled to fit, so on a wide window they sat centred
+  inside the panel at different left edges and used barely half of it. They now
+  size to the measured panel and share one position axis, so the same x in the
+  mask bar and in the plot below it is the same sequence position, and they are
+  redrawn when the window resizes or when the tab first becomes visible. The
+  recorded range caption is rounded the same way as the axis labels beside it
+  instead of printing the stored float in full.
+- Other dashboard corrections: the chosen theme survives a reload instead of
+  reverting to the operating system preference; the header bar stays in view
+  while scrolling, which is what the existing scroll offset already assumed; a
+  graph smaller than its canvas is centred rather than leaving the space below
+  it empty; panels that clip their contents show a shadow at the cut edge; and
+  the call inspector stacks its labels so entries such as "Capture index
+  (0-based)" are no longer broken across lines mid-phrase.
+
 - `azd ai rle rollout` now sends the rollout over RLE's Execute Rollout
   WebSocket instead of the HTTP API. The Foundry data-plane gateway ends an
   Execute Rollout HTTP request after roughly 120 seconds, which is shorter than

@@ -20,6 +20,7 @@
   --control-border: #d2daea;
   --hover: #f0f4ff;
   --glow: #eaf0ff;
+  --edge-shadow: rgba(36, 48, 74, 0.14);
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -34,9 +35,12 @@ button:disabled { opacity: .45; cursor: default; }
 select { min-width: 0; max-width: 100%; border: 1px solid var(--control-border); border-radius: 8px; padding: 9px 30px 9px 12px; background: var(--surface); color: var(--control-text); font-size: 14px; text-overflow: ellipsis; }
 input { background: var(--surface); color: var(--text); }
 label { font-size: 14px; font-weight: 600; }
-.skip-link { position: absolute; top: -100px; left: 20px; background: var(--surface); padding: 12px; z-index: 2; }
+.skip-link { position: absolute; top: -100px; left: 20px; background: var(--surface); padding: 12px; z-index: 6; }
 .skip-link:focus { top: 10px; }
-.topbar { display: flex; justify-content: space-between; align-items: center; padding: 17px max(28px, calc((100% - 1312px) / 2)); border-bottom: 1px solid var(--line); background: #ffffffed; }
+/* Sticky so the snapshot indicator and the theme toggle stay reachable on the
+   long raw-value views. The 72px scroll-padding-top on :root offsets in-page
+   jumps by exactly this height. */
+.topbar { display: flex; justify-content: space-between; align-items: center; padding: 17px max(28px, calc((100% - 1312px) / 2)); border-bottom: 1px solid var(--line); background: #ffffffed; position: sticky; top: 0; z-index: 5; backdrop-filter: saturate(150%) blur(8px); }
 .brand { display: flex; align-items: center; gap: 15px; color: #24304a; text-decoration: none; font-size: 16px; font-weight: 650; }
 .brand-mark { font-family: ui-monospace, Consolas, monospace; font-weight: 800; letter-spacing: -2px; font-size: 23px; color: #315ada; }
 .local-label { color: var(--muted); font-size: 12px; letter-spacing: 1.5px; }
@@ -99,7 +103,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 14px; overflow
 #final-response-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 5px; }
 #final-response-text.collapsed { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 5; }
 .reward-hero { padding: 13px; margin: 14px 14px 14px 0; border: 1px solid #d8e2f7; background: linear-gradient(135deg, #fff9, #e8f0ffb0); border-radius: 10px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; min-width: 0; position: relative; }
-.reward-hero::before { content: ""; position: absolute; height: 3px; width: 35px; top: 0; border-radius: 0 0 3px 3px; background: #738fe8; }
+.reward-hero::before { content: ""; position: absolute; height: 3px; width: 35px; top: 0; left: 50%; transform: translateX(-50%); border-radius: 0 0 3px 3px; background: #738fe8; }
 .reward-hero .eyebrow { color: #536da8; font-size: 12px; margin-bottom: 0; }
 #final-reward { color: #305bd4; font-size: 42px; font-weight: 700; letter-spacing: -2px; line-height: 1.3; overflow-wrap: anywhere; max-width: 100%; font-variant-numeric: tabular-nums; }
 .reward-caption { color: #677896; font-size: 12px; margin-top: 3px; }
@@ -128,8 +132,10 @@ summary:hover { color: var(--accent); }
 .graph-controls { display: flex; gap: 10px; align-items: center; margin-left: auto; white-space: nowrap; color: var(--muted); font-size: 13px; }
 .graph-controls button { padding: 3px 9px; }
 .graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) 285px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.graph-canvas { min-width: 0; min-height: 355px; max-height: 660px; overflow: auto; background-color: #f8faff; background-image: radial-gradient(#cbd6ec 0.65px, transparent 0.65px); background-size: 18px 18px; }
-#rollout-graph { display: block; margin: 0 auto; }
+.graph-canvas { min-width: 0; min-height: 355px; max-height: 660px; overflow: auto; display: flex; background-color: #f8faff; background-image: radial-gradient(#cbd6ec 0.65px, transparent 0.65px); background-size: 18px 18px; }
+/* Auto margins centre a graph smaller than the canvas without making the
+   leading overflow unreachable the way justify-content: center would. */
+#rollout-graph { display: block; flex: 0 0 auto; margin: auto; }
 .graph-edge { fill: none; stroke: #a5b5d5; stroke-width: 1.8; }
 .arrow-head { fill: #a5b5d5; }
 .invalid-edge { stroke: #bf8c68; stroke-dasharray: 5 4; }
@@ -148,11 +154,18 @@ summary:hover { color: var(--accent); }
 .graph-node[aria-pressed="true"] .node-card { stroke: #517ae4; stroke-width: 2.5; filter: drop-shadow(0 4px 7px #466bd926); }
 .graph-node:hover .node-card { stroke: #6c89dc; stroke-width: 2; }
 .graph-node:focus-visible .node-card { stroke: #274ac4; stroke-width: 3; stroke-dasharray: 4 2; }
-#graph-inspector { padding: 24px 20px; border-left: 1px solid var(--line); min-width: 0; max-height: 660px; overflow-y: auto; }
+#graph-inspector { padding: 24px 20px; border-left: 1px solid var(--line); min-width: 0; max-height: 660px; overflow-y: auto; overscroll-behavior: contain; }
 #graph-inspector .eyebrow { font-size: 11px; color: #7c8aa5; }
 #graph-inspector .inspector-id { display: block; margin: 9px 0 18px; color: var(--muted); font-size: 12px; }
-#graph-inspector .field-list { grid-template-columns: minmax(90px, 1fr) minmax(0, 1fr); gap: 12px; font-size: 13px; margin: 20px 0; }
-.field-list { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 3fr); gap: 12px 24px; font-size: 14px; margin: 16px 0; }
+/* Stacked in the sidebar: at this width a two-column layout broke labels such
+   as "Capture index (0-based)" across lines mid-phrase. */
+#graph-inspector .field-list { display: block; font-size: 13px; margin: 20px 0; }
+#graph-inspector .field-list dt { font-size: 12px; }
+#graph-inspector .field-list dd { margin-top: 2px; }
+#graph-inspector .field-list dd + dt { margin-top: 13px; }
+/* The label column is capped rather than proportional: at 3fr the labels in a
+   full-width panel drifted several hundred pixels from their values. */
+.field-list { display: grid; grid-template-columns: minmax(120px, 230px) minmax(0, 1fr); gap: 12px 24px; font-size: 14px; margin: 16px 0; }
 dt { color: var(--muted); }
 dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .linked-step { padding: 8px 10px; background: #f2f6ff; border-radius: 6px; font-size: 13px; margin-top: 5px; overflow-wrap: anywhere; }
@@ -176,12 +189,14 @@ dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .message-tools pre { max-height: 260px; }
 .sequence-toolbar select { flex: 1; max-width: 650px; }
 .sequence-meta { padding: 0 24px; }
-.sequence-meta .field-list { display: flex; flex-wrap: wrap; gap: 5px 10px; font-size: 13px; margin: 0 0 18px; }
-.sequence-meta dd { margin-right: 18px; font-weight: 600; }
+/* Short scalar metadata reads better inline than as a label/value grid, and
+   #capture-details holds the same shape of data as the sequence header. */
+.sequence-meta .field-list, #capture-details .field-list { display: flex; flex-wrap: wrap; gap: 5px 10px; font-size: 13px; margin: 0 0 18px; }
+.sequence-meta dd, #capture-details .field-list dd { margin-right: 18px; font-weight: 600; }
 .token-visual:not(:empty) { padding: 20px 24px; background: #fafbff; border-top: 1px solid var(--line); overflow-x: auto; }
 .token-visual h3 { font-size: 15px; margin: 6px 0 16px; }
 .token-visual p + h3 { margin-top: 26px; }
-.mask-overview { width: 100%; min-width: 350px; height: 64px; display: block; }
+.mask-overview { width: 100%; min-width: 500px; height: 56px; display: block; }
 .mask-region.target { fill: #9b79d7; }
 .mask-region.excluded { fill: #dfe5ef; }
 .mask-region.unknown { fill: #e8bc68; }
@@ -216,7 +231,22 @@ tbody tr:hover { background: #f4f7ff; }
 .pagination > div { display: flex; gap: 8px; }
 .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 18px; margin-bottom: 24px; align-items: start; }
 .chart-panel { padding: 18px; background: #fcfdff; }
-#steps, #token-chart { max-height: 440px; overflow-y: auto; margin-top: 15px; }
+#steps, #token-chart { max-height: 440px; overflow-y: auto; margin-top: 15px; overscroll-behavior: contain; }
+
+/* A clipped panel should say so. The two surface-coloured layers scroll with
+   the content, so they cover the fixed shadow layers only while that edge is
+   already at the end of the scroll range. */
+.scroll-hint {
+  background-repeat: no-repeat;
+  background-position: top, bottom, top, bottom;
+  background-size: 100% 28px, 100% 28px, 100% 11px, 100% 11px;
+  background-attachment: local, local, scroll, scroll;
+  background-image:
+    linear-gradient(var(--surface) 55%, transparent),
+    linear-gradient(transparent, var(--surface) 45%),
+    linear-gradient(var(--edge-shadow), transparent),
+    linear-gradient(transparent, var(--edge-shadow));
+}
 .step-details { border: 1px solid var(--line); border-radius: 7px; background: white; padding: 0 12px; margin-top: 7px; scroll-margin-top: 72px; }
 .step-details[open] { padding-bottom: 14px; }
 .step-details[open] > summary { border-bottom: 1px solid var(--line); }
@@ -279,13 +309,14 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
   --control-border: #3b4b65;
   --hover: #23334e;
   --glow: #20345480;
+  --edge-shadow: rgba(0, 0, 0, 0.42);
   --muted: #a6b4ce;
   --line: #33425a;
   --accent: #9db9ff;
   --violet: #b99bed;
   --teal: #76d8c0;
 }
-:where([data-theme="dark"]) .topbar { background: #141e2e; }
+:where([data-theme="dark"]) .topbar { background: #141e2eee; }
 :where([data-theme="dark"]) .brand { color: var(--text); }
 :where([data-theme="dark"]) .brand-mark { color: var(--accent); }
 :where([data-theme="dark"]) .snapshot-meta { background: linear-gradient(112deg, #182232 38%, #202f4a); border-color: var(--line); }
@@ -362,7 +393,10 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 @media (max-width: 960px) {
   .graph-layout { grid-template-columns: minmax(0, 1fr); }
   #graph-inspector { border-left: 0; border-top: 1px solid var(--line); max-height: 420px; }
-  #graph-inspector .field-list { grid-template-columns: minmax(130px, 1fr) minmax(0, 3fr); }
+  /* Full-width below this breakpoint, so the two-column layout fits again. */
+  #graph-inspector .field-list { display: grid; grid-template-columns: minmax(130px, 230px) minmax(0, 1fr); gap: 12px 24px; }
+  #graph-inspector .field-list dd { margin-top: 0; }
+  #graph-inspector .field-list dd + dt { margin-top: 0; }
   .graph-canvas { min-height: 300px; max-height: 500px; }
   .graph-legend { align-self: flex-start; }
   .explorer-heading { flex-wrap: wrap; }

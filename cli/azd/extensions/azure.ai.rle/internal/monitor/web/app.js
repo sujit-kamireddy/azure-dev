@@ -18,7 +18,9 @@ let tokenPage = 0;
 let tokenData = null;
 let stepPage = 0;
 let callPage = 0;
+let overviewWidth = 0;
 const CHART_PAGE_SIZE = 100;
+const THEME_KEY = "rle-monitor-theme";
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
@@ -27,10 +29,24 @@ function applyTheme(theme) {
   byID("theme-toggle").setAttribute("aria-label", `Switch to ${next} mode`);
 }
 
-applyTheme(window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+function storedTheme() {
+  try {
+    const stored = window.localStorage.getItem(THEME_KEY);
+    return stored === "dark" || stored === "light" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+applyTheme(storedTheme() ?? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
 byID("theme-toggle").addEventListener("click", () => {
   const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   applyTheme(theme);
+  try {
+    window.localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // A blocked storage partition only costs the preference, so keep the toggle working.
+  }
 });
 
 function element(tag, text, className) {
@@ -429,6 +445,29 @@ function binControl(group, label, position) {
   });
 }
 
+function formatLogprob(value) {
+  return new Intl.NumberFormat("en", { maximumSignificantDigits: 4,
+    notation: value !== 0 && (Math.abs(value) < 0.001 || Math.abs(value) >= 1e6) ? "scientific" : "standard" }).format(value);
+}
+
+/* The charts are drawn at 1 user unit per CSS pixel so their viewBox matches
+   the box the browser gives them. A fixed viewBox plus width: 100% letterboxed
+   them instead, and preserveAspectRatio: none is not an option because both
+   carry text. CHART_MIN_WIDTH mirrors the min-width in styles.css, where the
+   panel scrolls rather than compressing further. */
+const CHART_MIN_WIDTH = 500;
+
+/* Both charts plot the same position axis, so they share a data area: an x in
+   the mask bar and an x in the plot below it mean the same sequence position.
+   The left inset is the plot's y-axis label gutter. */
+const PLOT_LEFT = 90;
+const PLOT_RIGHT_INSET = 10;
+
+function chartWidth(probe) {
+  const measured = Math.round(probe.getBoundingClientRect().width);
+  return Math.max(measured || 800, CHART_MIN_WIDTH);
+}
+
 function renderTokenOverview() {
   const container = byID("token-visual");
   const data = tokenData;
@@ -436,8 +475,13 @@ function renderTokenOverview() {
     container.append(element("p", "No token positions were included in the arrays.", "muted"));
     return;
   }
-  container.append(element("h3", "Loss mask · whole sequence"));
-  const mask = svgElement("svg", { viewBox: "0 0 800 54", role: "group",
+  const heading = element("h3", "Loss mask · whole sequence");
+  container.append(heading);
+  const maskWidth = chartWidth(heading);
+  overviewWidth = container.clientWidth;
+  const maskRight = maskWidth - PLOT_RIGHT_INSET;
+  const maskSpan = maskRight - PLOT_LEFT;
+  const mask = svgElement("svg", { viewBox: `0 0 ${maskWidth} 56`, role: "group",
     "aria-label": "Whole-sequence loss mask, grouped by position range", class: "mask-overview" });
   for (const bin of data.bins) {
     const group = svgElement("g", { class: "position-bin" });
@@ -445,34 +489,35 @@ function renderTokenOverview() {
     let y = 0;
     for (const kind of ["excluded", "target", "unknown"]) {
       const height = bin[kind] / (bin.end - bin.start) * 36;
-      if (height) group.append(svgElement("rect", { x: bin.start / data.length * 800, y,
-        width: (bin.end - bin.start) / data.length * 800, height, class: `mask-region ${kind}` }));
+      if (height) group.append(svgElement("rect", { x: PLOT_LEFT + bin.start / data.length * maskSpan, y,
+        width: (bin.end - bin.start) / data.length * maskSpan, height, class: `mask-region ${kind}` }));
       y += height;
     }
     mask.append(group);
   }
-  mask.append(svgElement("text", { x: 0, y: 52, class: "plot-label" }, "0"),
-    svgElement("text", { x: 800, y: 52, "text-anchor": "end", class: "plot-label" }, String(data.length - 1)));
+  mask.append(svgElement("text", { x: PLOT_LEFT, y: 52, class: "plot-label" }, "0"),
+    svgElement("text", { x: maskRight, y: 52, "text-anchor": "end", class: "plot-label" }, String(data.length - 1)));
   container.append(mask, element("p",
     "Purple: target (1). Gray: excluded (0). Amber: missing / invalid. Each position bin shows its mask counts, not ordering within the bin. Select a bin for exact values. Mask 0 alone does not identify prompt versus generated tokens.", "section-note"));
-  container.append(element("h3", "Recorded log probabilities · target positions"));
+  const plotHeading = element("h3", "Recorded log probabilities · target positions");
+  container.append(plotHeading);
   if (!data.scored) {
     container.append(element("p", "No valid log probabilities at mask-1 positions were included. Unscored entries are not plotted.", "muted"));
     return;
   }
+  const plotWidth = chartWidth(plotHeading);
+  const right = plotWidth - PLOT_RIGHT_INSET;
   const scale = Math.abs(data.minLogprob) || 1;
   const yFor = (value) => 18 + (-value / scale) * 110;
-  const plot = svgElement("svg", { viewBox: "0 0 800 175", role: "group",
+  const plot = svgElement("svg", { viewBox: `0 0 ${plotWidth} 175`, role: "group",
     "aria-label": "Recorded target log probability ranges by sequence position", class: "probability-plot" });
   for (const [value, y] of [[0, 18], [-scale, 128]]) {
-    plot.append(svgElement("line", { x1: 90, x2: 790, y1: y, y2: y, class: "plot-axis" }),
-      svgElement("text", { x: 82, y: y + 4, "text-anchor": "end", class: "plot-label" },
-        new Intl.NumberFormat("en", { maximumSignificantDigits: 4,
-          notation: value !== 0 && (Math.abs(value) < 0.001 || Math.abs(value) >= 1e6) ? "scientific" : "standard" }).format(value)));
+    plot.append(svgElement("line", { x1: PLOT_LEFT, x2: right, y1: y, y2: y, class: "plot-axis" }),
+      svgElement("text", { x: PLOT_LEFT - 8, y: y + 4, "text-anchor": "end", class: "plot-label" }, formatLogprob(value)));
   }
   for (const bin of data.bins) {
     if (!bin.scored) continue;
-    const x = 90 + (bin.start + bin.end) / 2 / data.length * 700;
+    const x = PLOT_LEFT + (bin.start + bin.end) / 2 / data.length * (right - PLOT_LEFT);
     const group = svgElement("g", { class: "position-bin" });
     binControl(group, `Positions ${bin.start}–${bin.end - 1}: ${bin.scored} recorded target log probabilities, minimum ${bin.min}, maximum ${bin.max}`, bin.firstScored);
     group.append(svgElement("rect", { x: x - 4, y: 13, width: 8, height: 120, class: "plot-hit" }),
@@ -481,11 +526,11 @@ function renderTokenOverview() {
       svgElement("circle", { cx: x, cy: yFor(bin.min), r: 2, class: "plot-point" }));
     plot.append(group);
   }
-  plot.append(svgElement("text", { x: 90, y: 148, class: "plot-label" }, "0"),
-    svgElement("text", { x: 790, y: 148, "text-anchor": "end", class: "plot-label" }, String(data.length - 1)),
-    svgElement("text", { x: 440, y: 170, "text-anchor": "middle", class: "plot-label" }, "Sequence position (0-based)"));
+  plot.append(svgElement("text", { x: PLOT_LEFT, y: 148, class: "plot-label" }, "0"),
+    svgElement("text", { x: right, y: 148, "text-anchor": "end", class: "plot-label" }, String(data.length - 1)),
+    svgElement("text", { x: (PLOT_LEFT + right) / 2, y: 170, "text-anchor": "middle", class: "plot-label" }, "Sequence position (0-based)"));
   container.append(plot, element("p",
-    `Recorded range: ${data.minLogprob} to ${data.maxLogprob}. Each mark shows the minimum–maximum within a position bin, not an average or a per-token trace. Mask-0 and missing / invalid scores are omitted; recorded zeros at mask-1 positions are retained.`, "section-note"));
+    `Recorded range: ${formatLogprob(data.minLogprob)} to ${formatLogprob(data.maxLogprob)}. Each mark shows the minimum–maximum within a position bin, not an average or a per-token trace. Mask-0 and missing / invalid scores are omitted; recorded zeros at mask-1 positions are retained.`, "section-note"));
 }
 
 function navigationLink(label, href, action) {
@@ -746,6 +791,19 @@ byID("token-jump-form").addEventListener("submit", (event) => {
   event.preventDefault();
   if (byID("token-position").reportValidity()) jumpToPosition(byID("token-position").valueAsNumber);
 });
+
+/* The charts are drawn to the measured width, so they have to be redrawn when
+   that width changes: a window resize, or the tab becoming visible at all. */
+if (window.ResizeObserver) {
+  new ResizeObserver(() => {
+    if (!tokenData || !tokenData.length) return;
+    const panel = byID("token-visual");
+    const width = panel.clientWidth;
+    if (!width || Math.abs(width - overviewWidth) < 8) return;
+    panel.replaceChildren();
+    renderTokenOverview();
+  }).observe(byID("token-visual"));
+}
 
 function showLocked(message = "") {
   byID("snapshot").hidden = true;

@@ -107,7 +107,7 @@
               <p id="graph-empty" class="empty-state" hidden>No captured model calls or sequence paths were included.</p>
               <svg id="rollout-graph" role="group" aria-label="Captured rollout graph"></svg>
             </div>
-            <aside id="graph-inspector" aria-label="Selected model call details"></aside>
+            <aside id="graph-inspector" class="scroll-hint" aria-label="Selected model call details"></aside>
           </div>
           <p class="graph-footer"><span id="graph-count"></span><span>Click or focus a call and press Enter · Scroll to explore</span></p>
         </section>
@@ -150,12 +150,12 @@
               <div class="reward-axis" aria-hidden="true">
                 <span></span><div class="axis-labels"><span id="reward-min"></span><span>0</span><span id="reward-max"></span></div><span>Reward</span>
               </div>
-              <div id="steps"></div><div id="steps-pagination" class="chart-pagination"></div>
+              <div id="steps" class="scroll-hint"></div><div id="steps-pagination" class="chart-pagination"></div>
             </section>
             <section id="tokens-panel" class="panel chart-panel" aria-labelledby="tokens-title" hidden>
               <div class="section-heading"><h2 id="tokens-title">Tokens per model call</h2></div>
               <p class="section-note">Captured prompt and sampled tokens share one scale across all calls. Select a call to inspect it in the graph.</p>
-              <div id="token-chart"></div><div id="calls-pagination" class="chart-pagination"></div>
+              <div id="token-chart" class="scroll-hint"></div><div id="calls-pagination" class="chart-pagination"></div>
             </section>
           </div>
           <div id="capture-details"></div>
