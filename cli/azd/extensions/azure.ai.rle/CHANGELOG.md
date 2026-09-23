@@ -1,5 +1,17 @@
 # Release History
 
+## Unreleased
+
+- `azd ai rle train` gained `--follow`, which mirrors a run's artifacts to the
+  local disk while the job runs, into the layout the Loom cookbook's dashboard
+  already discovers. An in-flight Foundry run can be opened in that dashboard
+  without waiting for the job to finish. `--logs-root` chooses where mirrored
+  runs land and defaults to `$LOOM_LOGS_ROOT`, else `~/loom-runs`.
+
+  Following is resumable: re-running `--follow` for the same job continues from
+  the bytes already on disk. A dropped stream is reported but still exits zero,
+  because the job was accepted and is running on the service.
+
 ## 0.8.15-preview
 
 - `azd ai rle rollout` now displays live Execute Rollout WebSocket progress,
