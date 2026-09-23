@@ -52,9 +52,10 @@ type finetuneClient struct {
 var createFinetuneClient = newFinetuneClient
 
 type finetuneRleEnvironmentConfig struct {
-	Name            string `json:"name"`
-	Version         string `json:"version"`
-	MaxEpisodeSteps *int   `json:"max_episode_steps,omitempty"`
+	Name            string         `json:"name"`
+	Version         string         `json:"version"`
+	MaxEpisodeSteps *int           `json:"max_episode_steps,omitempty"`
+	Hyperparameters map[string]any `json:"hyperparameters,omitempty"`
 }
 
 type finetuneMethodRequest struct {

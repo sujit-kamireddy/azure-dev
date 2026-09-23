@@ -26,7 +26,7 @@ func TestBuildFinetuneJobRequestUsesRleEnvironmentMethod(t *testing.T) {
 		model:      "Qwen/Qwen3-32B",
 	}
 
-	request := buildFinetuneJobRequest(flags, "file-training", "")
+	request := buildFinetuneJobRequest(flags, "file-training", "", nil)
 
 	if request.Model != "Qwen/Qwen3-32B" {
 		t.Fatalf("expected model to map from flags, got %q", request.Model)
@@ -71,7 +71,7 @@ func TestBuildFinetuneJobRequestIncludesOptionalFields(t *testing.T) {
 		maxEpisodeSteps: 32,
 	}
 
-	request := buildFinetuneJobRequest(flags, "file-abc", "file-def")
+	request := buildFinetuneJobRequest(flags, "file-abc", "file-def", nil)
 
 	if request.TrainingFile != "file-abc" {
 		t.Fatalf("expected training_file to be set, got %q", request.TrainingFile)
@@ -428,5 +428,108 @@ func TestTrainCommandNoLongerRequiresRleFlags(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "rle-name") || strings.Contains(err.Error(), "rle-version") {
 		t.Fatalf("expected rle-name and rle-version to be optional, got %v", err)
+	}
+}
+
+func TestTrainingOptionsReachTheRleEnvironmentBlock(t *testing.T) {
+	flags := &rleTrainFlags{rleName: "math_rl", rleVersion: "1.0.6", model: "qwen3-32b-1"}
+	options := map[string]any{"learning_rate": 2e-5, "max_steps": float64(50)}
+
+	request := buildFinetuneJobRequest(flags, "file-training", "", options)
+
+	if request.Method.RleEnvironment.Hyperparameters["max_steps"] != float64(50) {
+		t.Fatalf("expected max_steps to reach the request, got %#v",
+			request.Method.RleEnvironment.Hyperparameters)
+	}
+
+	// The service reads options from method.rl_environment.hyperparameters, so a
+	// rename in the payload would silently stop applying them.
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var wire struct {
+		Method struct {
+			RleEnvironment struct {
+				Hyperparameters map[string]any `json:"hyperparameters"`
+			} `json:"rl_environment"`
+		} `json:"method"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if wire.Method.RleEnvironment.Hyperparameters["learning_rate"] != 2e-5 {
+		t.Fatalf("options did not survive the wire shape: %s", encoded)
+	}
+}
+
+func TestNoOptionsFileLeavesTheRequestUnchanged(t *testing.T) {
+	flags := &rleTrainFlags{rleName: "math_rl", rleVersion: "1.0.6", model: "qwen3-32b-1"}
+
+	request := buildFinetuneJobRequest(flags, "file-training", "", nil)
+
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "hyperparameters") {
+		t.Fatalf("an absent options file must not add the field: %s", encoded)
+	}
+}
+
+func TestLoadTrainingOptionsReadsAJsonObject(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "options.json")
+	if err := os.WriteFile(path, []byte(`{"max_steps": 50, "learning_rate": 2e-5}`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	options, err := loadTrainingOptions(path)
+	if err != nil {
+		t.Fatalf("loadTrainingOptions: %v", err)
+	}
+	if options["max_steps"] != float64(50) {
+		t.Fatalf("unexpected options: %#v", options)
+	}
+}
+
+func TestLoadTrainingOptionsIsOptional(t *testing.T) {
+	for _, value := range []string{"", "   "} {
+		options, err := loadTrainingOptions(value)
+		if err != nil || options != nil {
+			t.Fatalf("expected no options and no error, got %#v / %v", options, err)
+		}
+	}
+}
+
+func TestLoadTrainingOptionsRejectsWhatWouldBeSilentlyIgnored(t *testing.T) {
+	directory := t.TempDir()
+	cases := map[string]string{
+		"a JSON array":     `[{"max_steps": 50}]`,
+		"a bare value":     `50`,
+		"a JSON null":      `null`,
+		"trailing garbage": `{"max_steps": 50} {"max_steps": 60}`,
+		"malformed JSON":   `{"max_steps": }`,
+	}
+	for name, contents := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(directory, strings.ReplaceAll(name, " ", "_")+".json")
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			if _, err := loadTrainingOptions(path); err == nil {
+				t.Fatalf("expected %s to be refused", name)
+			}
+		})
+	}
+}
+
+func TestLoadTrainingOptionsReportsAMissingFile(t *testing.T) {
+	_, err := loadTrainingOptions(filepath.Join(t.TempDir(), "absent.json"))
+	if err == nil {
+		t.Fatal("expected a missing options file to be an error")
+	}
+	var localErr *azdext.LocalError
+	if !errors.As(err, &localErr) || localErr.Code != "rle_train_options_unreadable" {
+		t.Fatalf("expected a user-facing error, got %#v", err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"azure.ai.rle/internal/project"
@@ -23,6 +24,7 @@ type rleTrainFlags struct {
 	validationFile  string
 	suffix          string
 	maxEpisodeSteps int
+	optionsFile     string
 	endpoint        string
 }
 
@@ -70,6 +72,9 @@ FOUNDRY_PROJECT_ENDPOINT.`,
 	cmd.Flags().StringVar(&flags.suffix, "suffix", "", "Suffix appended to the resulting fine-tuned model name.")
 	cmd.Flags().IntVar(&flags.maxEpisodeSteps, "max-episode-steps", 0,
 		"Maximum steps the RLE executes per rollout (0 uses the service default).")
+	cmd.Flags().StringVar(&flags.optionsFile, "options-file", "",
+		"Path to a JSON file of training options (learning_rate, group_size, max_steps, ...). "+
+			"Omitted options keep the service defaults.")
 	cmd.Flags().StringVar(&flags.endpoint, "endpoint", "",
 		fmt.Sprintf("Fine-tuning API endpoint. Defaults to the account in %s.", foundryProjectEndpointEnvVar))
 
@@ -120,6 +125,10 @@ func (a *trainAction) Run() error {
 	if err != nil {
 		return err
 	}
+	trainingOptions, err := loadTrainingOptions(a.flags.optionsFile)
+	if err != nil {
+		return err
+	}
 
 	projectEndpoint, err := resolveFoundryProjectEndpoint()
 	if err != nil {
@@ -162,7 +171,7 @@ func (a *trainAction) Run() error {
 		}
 	}
 
-	request := buildFinetuneJobRequest(a.flags, trainingFileID, validationFileID)
+	request := buildFinetuneJobRequest(a.flags, trainingFileID, validationFileID, trainingOptions)
 
 	if _, err := fmt.Fprintf(
 		a.cmd.OutOrStdout(),
@@ -172,6 +181,23 @@ func (a *trainAction) Run() error {
 		a.flags.model,
 	); err != nil {
 		return err
+	}
+
+	if len(trainingOptions) > 0 {
+		names := make([]string, 0, len(trainingOptions))
+		for name := range trainingOptions {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		if _, err := fmt.Fprintf(
+			a.cmd.OutOrStdout(),
+			"Applying %d training option(s) from %s: %s\n",
+			len(names),
+			a.flags.optionsFile,
+			strings.Join(names, ", "),
+		); err != nil {
+			return err
+		}
 	}
 
 	job, err := client.createJob(a.cmd.Context(), request, azureAIProject)
@@ -252,6 +278,7 @@ func buildFinetuneJobRequest(
 	flags *rleTrainFlags,
 	trainingFileID string,
 	validationFileID string,
+	options map[string]any,
 ) finetuneJobCreationRequest {
 	rleEnvironment := finetuneRleEnvironmentConfig{
 		Name:    flags.rleName,
@@ -260,6 +287,9 @@ func buildFinetuneJobRequest(
 	if flags.maxEpisodeSteps > 0 {
 		steps := flags.maxEpisodeSteps
 		rleEnvironment.MaxEpisodeSteps = &steps
+	}
+	if len(options) > 0 {
+		rleEnvironment.Hyperparameters = options
 	}
 
 	request := finetuneJobCreationRequest{
@@ -278,4 +308,69 @@ func buildFinetuneJobRequest(
 		request.Suffix = &flags.suffix
 	}
 	return request
+}
+
+// loadTrainingOptions reads a JSON object of training options from disk.
+//
+// Only the shape is checked here. Which option names are valid, and what each
+// accepts, is the fine-tuning service's to decide: it projects them into the
+// recipe's metadata and already refuses the ones the recipe cannot apply.
+// Duplicating that list in the CLI would give two answers that drift apart, and
+// the stale one would be the one rejecting a newly supported option.
+func loadTrainingOptions(optionsFile string) (map[string]any, error) {
+	trimmed := strings.TrimSpace(optionsFile)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	filePath, err := filepath.Abs(trimmed)
+	if err != nil {
+		return nil, &azdext.LocalError{
+			Message:    fmt.Sprintf("Could not resolve the options file path %q.", trimmed),
+			Code:       "rle_train_options_path_invalid",
+			Category:   azdext.LocalErrorCategoryUser,
+			Suggestion: "Pass a readable path to a JSON file using --options-file.",
+		}
+	}
+
+	contents, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, &azdext.LocalError{
+			Message:    fmt.Sprintf("Could not read the options file %s.", filePath),
+			Code:       "rle_train_options_unreadable",
+			Category:   azdext.LocalErrorCategoryUser,
+			Suggestion: "Pass a readable path to a JSON file using --options-file.",
+		}
+	}
+
+	var options map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(contents)))
+	if err := decoder.Decode(&options); err != nil {
+		return nil, &azdext.LocalError{
+			Message:    fmt.Sprintf("The options file %s is not a JSON object: %v", filePath, err),
+			Code:       "rle_train_options_invalid_json",
+			Category:   azdext.LocalErrorCategoryUser,
+			Suggestion: `Use a flat JSON object, for example {"learning_rate": 2e-5, "max_steps": 50}.`,
+		}
+	}
+	if options == nil {
+		return nil, &azdext.LocalError{
+			Message:    fmt.Sprintf("The options file %s contains no options.", filePath),
+			Code:       "rle_train_options_empty",
+			Category:   azdext.LocalErrorCategoryUser,
+			Suggestion: `Use a flat JSON object, for example {"learning_rate": 2e-5, "max_steps": 50}.`,
+		}
+	}
+
+	// A second document would be silently ignored, and the caller would think
+	// options it can see in the file were applied.
+	if decoder.More() {
+		return nil, &azdext.LocalError{
+			Message:    fmt.Sprintf("The options file %s contains more than one JSON document.", filePath),
+			Code:       "rle_train_options_invalid_json",
+			Category:   azdext.LocalErrorCategoryUser,
+			Suggestion: "Put every option in a single JSON object.",
+		}
+	}
+	return options, nil
 }
