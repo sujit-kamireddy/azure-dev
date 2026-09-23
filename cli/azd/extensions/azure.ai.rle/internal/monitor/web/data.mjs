@@ -156,6 +156,26 @@ export function mapSnapshot(snapshot) {
     outcome: response.success === true ? "Task succeeded" : response.success === false ? "Task unsuccessful" : null };
 }
 
+// Capture diagnostics arrive as "[SEVERITY] code: message". A FATAL entry means the
+// export is empty because the run failed, not because nothing was worth recording, so
+// the severity has to be readable before the strings reach the collapsed details panel.
+const SEVERITY_RANK = { FATAL: 3, ERROR: 2, WARNING: 1, WARN: 1, INFO: 0 };
+
+export function captureDiagnostics(validation) {
+  if (!Array.isArray(validation)) return [];
+  return validation.filter(isString).map((text) => {
+    const match = /^\s*\[([A-Za-z]+)\]\s*(?:([A-Za-z0-9_.-]+):\s*)?([\s\S]*)$/.exec(text);
+    if (!match) return { severity: null, code: null, message: text.trim(), text, blocking: false };
+    const severity = match[1].toUpperCase();
+    return {
+      severity, code: match[2] ?? null, message: match[3].trim(), text,
+      blocking: (SEVERITY_RANK[severity] ?? 0) >= SEVERITY_RANK.ERROR,
+    };
+  });
+}
+
+export const blockingDiagnostics = (validation) => captureDiagnostics(validation).filter((entry) => entry.blocking);
+
 export class SessionRequiredError extends Error {
   constructor(message) {
     super(message);

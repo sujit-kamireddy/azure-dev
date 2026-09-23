@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bootstrapSession, fetchSnapshot, mapSnapshot, SessionRequiredError, unlockSession } from "./web/data.mjs";
+import { blockingDiagnostics, bootstrapSession, captureDiagnostics, fetchSnapshot, mapSnapshot, SessionRequiredError, unlockSession } from "./web/data.mjs";
 
 const snapshot = (response = {}) => ({
   source: "Saved local result", saved_at: "2026-09-21T20:00:00Z",
@@ -295,4 +295,42 @@ test("rejected manual codes produce a distinct locked state without echoing the 
     assert.ok(!error.message.includes("never-display-this-code"));
     return true;
   });
+});
+
+test("captureDiagnostics splits severity, code, and message", () => {
+  const [entry] = captureDiagnostics([
+    "[FATAL] no_turns: the intercept saw no model calls: the agent never reached it (wrong base URL)",
+  ]);
+  assert.equal(entry.severity, "FATAL");
+  assert.equal(entry.code, "no_turns");
+  assert.equal(entry.message, "the intercept saw no model calls: the agent never reached it (wrong base URL)");
+  assert.equal(entry.blocking, true);
+});
+
+test("captureDiagnostics keeps unrecognised text intact", () => {
+  const [entry] = captureDiagnostics(["the sandbox restarted midway"]);
+  assert.equal(entry.severity, null);
+  assert.equal(entry.code, null);
+  assert.equal(entry.message, "the sandbox restarted midway");
+  assert.equal(entry.blocking, false);
+});
+
+test("captureDiagnostics treats an entry without a code as a message", () => {
+  const [entry] = captureDiagnostics(["[WARNING] token counts were estimated"]);
+  assert.equal(entry.severity, "WARNING");
+  assert.equal(entry.code, null);
+  assert.equal(entry.message, "token counts were estimated");
+  assert.equal(entry.blocking, false);
+});
+
+test("captureDiagnostics ignores absent or non-string entries", () => {
+  assert.deepEqual(captureDiagnostics(undefined), []);
+  assert.deepEqual(captureDiagnostics([null, 7]), []);
+});
+
+test("blockingDiagnostics keeps only error and fatal entries", () => {
+  const blocking = blockingDiagnostics([
+    "[INFO] a: fine", "[WARNING] b: careful", "[ERROR] c: broken", "[FATAL] d: stopped",
+  ]);
+  assert.deepEqual(blocking.map((entry) => entry.code), ["c", "d"]);
 });

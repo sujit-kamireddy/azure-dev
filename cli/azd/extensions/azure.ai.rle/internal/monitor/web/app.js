@@ -2,8 +2,9 @@
 // Licensed under the MIT License.
 
 import {
-  bootstrapSession, buildGraph, chartScales, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
-  sequenceData, sequenceLabel, sequencePage, SessionRequiredError, TOKEN_PAGE_SIZE, unlockSession,
+  blockingDiagnostics, bootstrapSession, buildGraph, captureDiagnostics, chartScales, fetchSnapshot, isNumber,
+  mapSnapshot, present, rewardGeometry, sequenceData, sequenceLabel, sequencePage, SessionRequiredError,
+  TOKEN_PAGE_SIZE, unlockSession,
 } from "./data.mjs";
 
 const byID = (id) => document.getElementById(id);
@@ -92,6 +93,34 @@ function notices(id, messages) {
   const container = byID(id);
   container.replaceChildren(...messages.map((message) => element("p", message)));
   container.hidden = !messages.length;
+}
+
+const sentence = (text) => text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+
+// A blocking diagnostic is the reason an export is empty. Left in the collapsed panel on
+// the third tab it reads as "nothing happened" instead of "the run never reached the model".
+function blocking() {
+  return blockingDiagnostics(model?.graph?.validation);
+}
+
+function emptyReason(id, fallback) {
+  const [first] = blocking();
+  byID(id).textContent = first ? sentence(first.message) : fallback;
+}
+
+function renderCaptureAlert() {
+  const entries = blocking();
+  byID("capture-alert").hidden = !entries.length;
+  if (!entries.length) return;
+  byID("capture-alert-title").textContent = entries.length > 1
+    ? `${entries.length} problems stopped this capture`
+    : "Nothing was captured";
+  byID("capture-alert-list").replaceChildren(...entries.map((entry) => {
+    const item = element("li");
+    if (entry.code) item.append(element("code", entry.code, "diagnostic-code"));
+    item.append(element("span", sentence(entry.message)));
+    return item;
+  }));
 }
 
 function metric(label, value) {
@@ -230,6 +259,8 @@ function renderGraph(focusKey = null) {
   byID("graph-prev").disabled = graphPage === 0;
   byID("graph-next").disabled = graphPage + 1 === graphView.pageCount;
   byID("graph-empty").hidden = graphView.total !== 0;
+  byID("rollout-graph").hidden = graphView.total === 0;
+  if (graphView.total === 0) emptyReason("graph-empty-reason", "This export contains no model calls and no sequence paths.");
   const svg = byID("rollout-graph");
   svg.toggleAttribute("hidden", !graphView.total);
   svg.replaceChildren();
@@ -364,6 +395,8 @@ function renderSequence() {
   const sequence = model.graph.sequences?.[index];
   const hasSequence = sequence !== undefined;
   byID("sequence-empty").hidden = hasSequence;
+  byID("sequence-picker").hidden = !hasSequence;
+  if (!hasSequence) emptyReason("sequence-empty-reason", "This export contains no captured sequences.");
   byID("sequence-select").disabled = !hasSequence;
   byID("sequence-meta").replaceChildren();
   byID("sequence-counts").replaceChildren();
@@ -674,7 +707,17 @@ function renderDetails() {
   byID("charts").hidden = byID("steps-panel").hidden && byID("tokens-panel").hidden;
   byID("validation-panel").hidden = !model.graph.validation?.length;
   byID("validation-count").textContent = model.graph.validation?.length ? `(${model.graph.validation.length})` : "";
-  lazyJSON(byID("validation"), model.graph.validation);
+  const diagnostics = captureDiagnostics(model.graph.validation);
+  const list = element("ul", undefined, "diagnostic-list");
+  for (const entry of diagnostics) {
+    const item = element("li", undefined, entry.blocking ? "diagnostic blocking" : "diagnostic");
+    if (entry.severity) item.append(element("span", entry.severity, "diagnostic-severity"));
+    if (entry.code) item.append(element("code", entry.code, "diagnostic-code"));
+    item.append(element("span", sentence(entry.message), "diagnostic-message"));
+    list.append(item);
+  }
+  byID("validation").replaceChildren(list);
+  byID("validation-panel").open = diagnostics.some((entry) => entry.blocking);
   lazyJSON(byID("raw-content"), model.response);
 }
 
@@ -696,6 +739,7 @@ export function setSnapshot(snapshot) {
   for (const details of byID("snapshot").querySelectorAll("details")) details.open = false;
   byID("metrics").replaceChildren();
   notices("snapshot-notices", model.warnings);
+  renderCaptureAlert();
   const outcome = byID("outcome");
   outcome.hidden = model.outcome === null;
   outcome.textContent = model.outcome ?? "";
@@ -725,6 +769,11 @@ export function setSnapshot(snapshot) {
   byID("final-response-toggle").hidden = !model.finalResponseExpandable;
   byID("final-response-toggle").setAttribute("aria-expanded", "false");
   byID("final-response-toggle").textContent = "Show full response";
+  const inconclusive = blocking().length > 0;
+  byID("reward-hero").classList.toggle("inconclusive", inconclusive);
+  byID("reward-caption").replaceChildren(...(inconclusive
+    ? [element("span", "Reported reward"), element("br"), element("span", "No episode was captured")]
+    : [element("span", "Reported reward"), element("br"), element("span", "No normalization applied")]));
   metric("Episode steps", model.steps?.length);
   metric("Model calls", model.turns?.length);
   metric("Captured sequences", model.graph.sequences?.length);

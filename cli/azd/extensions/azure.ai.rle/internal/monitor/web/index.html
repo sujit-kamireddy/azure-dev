@@ -79,13 +79,18 @@
             <p id="final-response-text"></p>
           </section>
         </div>
-        <div class="reward-hero"><p class="eyebrow">FINAL REWARD</p><p id="final-reward"></p><p class="reward-caption">Reported reward<br>No normalization applied</p></div>
+        <div id="reward-hero" class="reward-hero"><p class="eyebrow">FINAL REWARD</p><p id="final-reward"></p><p id="reward-caption" class="reward-caption">Reported reward<br>No normalization applied</p></div>
         <div class="snapshot-provenance">
           <span><span id="source"></span><span id="saved-at-separator" class="separator" aria-hidden="true" hidden>·</span><time id="saved-at" hidden></time></span>
           <p id="episode-description" class="muted" hidden></p>
         </div>
       </section>
       <div id="snapshot-notices" class="notice section-block" role="status" hidden></div>
+      <section id="capture-alert" class="capture-alert section-block" role="alert" aria-labelledby="capture-alert-title" hidden>
+        <h2 id="capture-alert-title">Nothing was captured</h2>
+        <ul id="capture-alert-list"></ul>
+        <p class="capture-alert-note">The reward and counts below come from the saved response. They do not describe a completed episode.</p>
+      </section>
       <section class="explorer" aria-label="Rollout explorer">
         <div class="tab-bar" role="tablist" aria-label="Rollout detail views">
           <button id="tab-graph" role="tab" type="button" aria-selected="true" aria-controls="panel-graph" tabindex="0">Rollout graph</button>
@@ -104,7 +109,7 @@
           <div id="graph-notices" class="inline-notices" role="status" hidden></div>
           <div class="graph-layout">
             <div class="graph-canvas" tabindex="0" role="region" aria-label="Scrollable rollout graph">
-              <p id="graph-empty" class="empty-state" hidden>No captured model calls or sequence paths were included.</p>
+              <p id="graph-empty" class="empty-state" hidden><span class="empty-title">No call paths to draw</span><span id="graph-empty-reason" class="empty-reason">This export contains no model calls and no sequence paths.</span></p>
               <svg id="rollout-graph" role="group" aria-label="Captured rollout graph"></svg>
             </div>
             <aside id="graph-inspector" class="scroll-hint" aria-label="Selected model call details"></aside>
@@ -117,10 +122,10 @@
         </section>
         <section id="panel-tokens" role="tabpanel" aria-labelledby="tab-tokens" tabindex="0" hidden>
           <div class="explorer-heading"><div><h2>Sequence overview</h2><p class="section-note">Counts computed from the saved arrays. Positions are zero-based within the selected sequence, not time or billing usage.</p></div></div>
-          <div class="sequence-toolbar"><label for="sequence-select">Captured sequence</label><select id="sequence-select"></select></div>
+          <div id="sequence-picker" class="sequence-toolbar"><label for="sequence-select">Captured sequence</label><select id="sequence-select"></select></div>
           <div id="sequence-meta" class="sequence-meta"></div>
           <div id="sequence-notices" class="inline-notices" role="status" hidden></div>
-          <p id="sequence-empty" class="empty-state" hidden>No captured sequences were included in this export.</p>
+          <p id="sequence-empty" class="empty-state" hidden><span class="empty-title">No sequences to show</span><span id="sequence-empty-reason" class="empty-reason">This export contains no captured sequences.</span></p>
           <div id="sequence-counts" class="sequence-meta"></div>
           <div id="token-visual" class="token-visual"></div>
           <details id="token-raw">

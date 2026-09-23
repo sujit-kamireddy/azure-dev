@@ -22,6 +22,17 @@
 
 ## 0.8.14-preview
 
+- The rollout dashboard now reports a failed capture instead of presenting it
+  as an empty one. A rollout whose agent never reached the model interception
+  point records a `[FATAL]` capture diagnostic, but the dashboard rendered it
+  as raw JSON inside a collapsed panel on the last tab, while the summary above
+  showed "Execution completed", a final reward of 0 and three counts of zero.
+  Blocking diagnostics are now raised to an alert directly under the summary,
+  the reward is drawn in a muted style and captioned "No episode was captured"
+  so it is not read as a score, the diagnostics panel opens on load and lists
+  each entry with its severity and code instead of a JSON dump, and the two
+  empty views name the recorded reason rather than stating only that nothing
+  was included. The sequence picker is hidden when it has nothing to pick.
 - The rollout dashboard now draws the loss mask and the log probability plot
   at the width it is actually given. Both were authored against a fixed
   800-unit viewBox and scaled to fit, so on a wide window they sat centred
