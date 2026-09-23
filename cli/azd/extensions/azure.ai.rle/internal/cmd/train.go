@@ -25,6 +25,8 @@ type rleTrainFlags struct {
 	suffix          string
 	maxEpisodeSteps int
 	optionsFile     string
+	follow          bool
+	logsRoot        string
 	endpoint        string
 }
 
@@ -75,6 +77,11 @@ FOUNDRY_PROJECT_ENDPOINT.`,
 	cmd.Flags().StringVar(&flags.optionsFile, "options-file", "",
 		"Path to a JSON file of training options (learning_rate, group_size, max_steps, ...). "+
 			"Omitted options keep the service defaults.")
+	cmd.Flags().BoolVar(&flags.follow, "follow", false,
+		"Stream the run's logs and metrics locally until the job finishes, in the layout "+
+			"the Loom dashboard reads.")
+	cmd.Flags().StringVar(&flags.logsRoot, "logs-root", "",
+		"Where --follow writes mirrored runs. Defaults to $LOOM_LOGS_ROOT, else ~/loom-runs.")
 	cmd.Flags().StringVar(&flags.endpoint, "endpoint", "",
 		fmt.Sprintf("Fine-tuning API endpoint. Defaults to the account in %s.", foundryProjectEndpointEnvVar))
 
@@ -220,6 +227,46 @@ func (a *trainAction) Run() error {
 	}
 	if _, err := fmt.Fprintln(a.cmd.OutOrStdout(), string(body)); err != nil {
 		return err
+	}
+
+	if a.flags.follow {
+		return a.followJob(client, job.Id)
+	}
+	return nil
+}
+
+// followJob mirrors the run's artifacts locally until it finishes.
+//
+// A streaming failure is reported but does not fail the command: the job was
+// accepted and is running on the service, and exiting non-zero would suggest it
+// was not. The job id is printed above, so it stays recoverable.
+func (a *trainAction) followJob(client *finetuneClient, jobID string) error {
+	authorization, err := client.authorizationHeader(a.cmd.Context())
+	if err != nil {
+		return fmt.Errorf("acquire a token for the run stream: %w", err)
+	}
+
+	logsRoot := strings.TrimSpace(a.flags.logsRoot)
+	if logsRoot == "" {
+		logsRoot = defaultLogsRoot()
+	}
+
+	status, streamErr := followTrainingRun(
+		a.cmd.Context(),
+		client.baseUrl,
+		authorization,
+		jobID,
+		logsRoot,
+		a.cmd.OutOrStdout(),
+	)
+	if streamErr != nil {
+		fmt.Fprintf(a.cmd.ErrOrStderr(),
+			"\nStopped following %s: %v\nThe job is still running on the service; "+
+				"check it with: azd ai rle jobs\n", jobID, streamErr)
+		return nil
+	}
+	if status != "" {
+		fmt.Fprintf(a.cmd.OutOrStdout(), "Final status: %s\n", status)
 	}
 	return nil
 }

@@ -595,6 +595,27 @@ dropping it -- a typo that was quietly ignored would produce a job that trained
 on defaults while its record claimed otherwise. The error lists every accepted
 name.
 
+`--follow` mirrors the run's artifacts to the local disk as they are written and
+waits for the job to finish:
+
+```powershell
+azd ai rle train ... --follow --logs-root $HOME/loom-runs
+```
+
+Files land in `<logs-root>/rle-harness/<job id>/`, which is the layout the Loom
+cookbook's `dashboard_server.py` discovers, so a followed run can be opened in
+the existing dashboard while it is still going:
+
+```bash
+python dashboard_server.py --root ~/loom-runs
+```
+
+`--logs-root` defaults to `$LOOM_LOGS_ROOT`, else `~/loom-runs`. Following is
+resumable: re-running `--follow` for the same job continues from the bytes
+already on disk. If the stream drops, `train` reports it but still exits zero --
+the job was accepted and is running on the service, and a non-zero exit would
+say otherwise.
+
 ## List RLE-backed fine-tuning jobs (experimental)
 
 `azd ai rle jobs` lists fine-tuning jobs that use the `rl_environment` method.
