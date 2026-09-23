@@ -451,6 +451,13 @@ before any rollout is requested, so the CLI reports it and falls back to the
 HTTP API unchanged — and a failure *after* the upgrade is never retried on
 HTTP, because by then the rollout may already have run.
 
+While the WebSocket rollout runs, the CLI prints elapsed lifecycle milestones
+for target resolution, sandbox and capture setup, model execution, result
+collection, grading, and cleanup. Gym/OpenEnv rollouts also report each model
+call and environment action. Completed actions include cumulative reward and
+episode progress when the service provides it. These updates are best effort;
+the final `completed` or `error` message remains authoritative.
+
 ### Rollout artifacts
 
 The Execute Rollout response carries the whole Capture Proxy graph — token ids,
@@ -520,9 +527,14 @@ Or reopen a saved rollout from the folder where it was executed:
 azd ai rle monitor --rollout-id 3c27c30f5fba261c3a7a3e856b4e1388
 ```
 
-The dashboard includes **Rollout graph**, **Tokens and Metrics**, and **Rollout Stats**
-tabs, with a light/dark mode toggle. Viewing saved results needs no Azure sign-in
-and does not execute another rollout.
+The dashboard shows a compact final-response preview when the service reports one.
+Captured `<think>` reasoning is hidden from the preview, and the complete response
+can be expanded. The summary also derives tool activity and a captured-order call
+timeline from model messages. It includes **Rollout graph**, **Model conversation**,
+**Tokens and Metrics**, and **Rollout Stats** tabs, with a light/dark mode toggle.
+The conversation tab appears when captured turns include request or response
+messages. Viewing saved results needs no Azure sign-in and does not execute another
+rollout.
 
 Keep the terminal running while using the dashboard. **Ctrl+C** stops the local
 monitor without deleting saved artifacts.
@@ -541,8 +553,8 @@ results. If the rollout directory is missing, it warns and exits without opening
 a dashboard; check the ID and `--output-dir`. Incomplete or corrupt files return
 an error.
 
-**Current limits:** completed local snapshots only—no live updates, job monitoring,
-or conversation text. Metrics appear only when included in the saved data.
+**Current limits:** completed local snapshots only—no live updates or job monitoring.
+Conversation text and metrics appear only when included in the saved data.
 Execution completion does not imply task success.
 
 **Treat saved artifacts as sensitive:** they may contain customer content.

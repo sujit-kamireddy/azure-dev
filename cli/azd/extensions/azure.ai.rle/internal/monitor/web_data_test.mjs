@@ -121,13 +121,64 @@ test("token counts are exposed only at tokens capture level", () => {
   }
 });
 
+test("maps final response and captured model conversation without changing the response", () => {
+  const input = snapshot({
+    final_response: "<think>Private reasoning</think>\nThe final answer",
+    rollout: { turns: [
+      {
+        request_messages: [{ role: "system", content: "Instructions" }, { role: "user", content: "Question" }],
+        response_message: {
+          role: "assistant",
+          content: "Calling a tool",
+          tool_calls: [{ function: { name: "run_code", arguments: "{}" } }],
+        },
+      },
+      {
+        request_messages: [{ role: "tool", content: "Result" }],
+        response_message: { role: "assistant", content: "Answer", tool_calls: [{ name: "explain_result" }] },
+      },
+    ] },
+  });
+  const before = JSON.stringify(input);
+  const model = mapSnapshot(input);
+  assert.equal(model.finalResponse, input.response.final_response);
+  assert.equal(model.finalResponsePreview, "The final answer");
+  assert.equal(model.finalResponseReasoningHidden, true);
+  assert.equal(model.finalResponseExpandable, true);
+  assert.equal(model.hasConversation, true);
+  assert.deepEqual(model.turns[0].requestMessages, input.response.rollout.turns[0].request_messages);
+  assert.equal(model.turns[1].responseMessage.content, "Answer");
+  assert.deepEqual(model.turns[0].flow, ["system", "user", "assistant"]);
+  assert.deepEqual(model.turns[1].flow, ["tool", "assistant"]);
+  assert.equal(model.toolActivity.count, 2);
+  assert.deepEqual(model.toolActivity.names, ["run_code", "explain_result"]);
+  assert.equal(JSON.stringify(input), before);
+  assert.equal(mapSnapshot(snapshot()).finalResponse, null);
+  assert.equal(mapSnapshot(snapshot()).finalResponsePreview, null);
+  assert.equal(mapSnapshot(snapshot()).hasConversation, false);
+});
+
+test("keeps short final responses expanded and does not strip incomplete reasoning tags", () => {
+  const short = mapSnapshot(snapshot({ final_response: "A concise answer." }));
+  assert.equal(short.finalResponsePreview, "A concise answer.");
+  assert.equal(short.finalResponseReasoningHidden, false);
+  assert.equal(short.finalResponseExpandable, false);
+
+  const incomplete = mapSnapshot(snapshot({ final_response: "<think>Still generating" }));
+  assert.equal(incomplete.finalResponsePreview, "<think>Still generating");
+  assert.equal(incomplete.finalResponseReasoningHidden, false);
+});
+
 test("malformed responses fail explicitly instead of rendering fabricated values", () => {
   const invalid = [
     null, {}, { ...snapshot(), saved_at: "yesterday" }, { ...snapshot(), source: null },
     snapshot({ rollout_id: "" }), snapshot({ reward: "0.5" }), snapshot({ reward: Infinity }),
-    snapshot({ success: null }), snapshot({ success: "false" }), snapshot({ rollout: [] }),
+    snapshot({ success: null }), snapshot({ success: "false" }), snapshot({ final_response: 42 }),
+    snapshot({ rollout: [] }),
     snapshot({ episode: { steps: [null] } }), snapshot({ episode: { steps: [{ reward: "1" }] } }),
     snapshot({ rollout: { turns: [{ n_tools: -1 }] } }), snapshot({ rollout: { validation: {} } }),
+    snapshot({ rollout: { turns: [{ request_messages: [null] }] } }),
+    snapshot({ rollout: { turns: [{ response_message: "answer" }] } }),
     snapshot({ rollout: { stats: { n_turns: 1.2 } } }),
   ];
   for (const input of invalid) assert.throws(() => mapSnapshot(input), /Invalid snapshot/);

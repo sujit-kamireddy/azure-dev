@@ -50,6 +50,7 @@ const (
 // Frame types exchanged on the socket.
 const (
 	executeRolloutFrameExecute   = "execute"
+	executeRolloutFrameProgress  = "progress"
 	executeRolloutFrameCompleted = "completed"
 	executeRolloutFrameError     = "error"
 )
@@ -148,6 +149,7 @@ func (c *rleClient) executeRolloutOverWebSocket(
 	environmentVersion string,
 	loomBearerToken string,
 	request executeRolloutRequest,
+	onProgress func(executeRolloutProgress) error,
 ) (*executeRolloutResponse, error) {
 	endpoint, err := c.executeRolloutWebSocketURL(environmentName, environmentVersion, request.RolloutID)
 	if err != nil {
@@ -212,6 +214,8 @@ func (c *rleClient) executeRolloutOverWebSocket(
 		return nil, fmt.Errorf("send Execute Rollout request: %w", err)
 	}
 
+	var lastProgressSequence int64
+
 	// Stay in the read: a connection with no read in progress does not answer the server's
 	// keepalive pings, and a rollout can run for minutes between frames.
 	for {
@@ -234,6 +238,17 @@ func (c *rleClient) executeRolloutOverWebSocket(
 			continue
 		}
 		switch header.Type {
+		case executeRolloutFrameProgress:
+			progress, err := decodeExecuteRolloutProgress(payload, request.RolloutID, lastProgressSequence)
+			if err != nil {
+				return nil, err
+			}
+			lastProgressSequence = progress.Sequence
+			if onProgress != nil {
+				if err := onProgress(progress); err != nil {
+					return nil, fmt.Errorf("write Execute Rollout progress: %w", err)
+				}
+			}
 		case executeRolloutFrameCompleted:
 			var result executeRolloutResponse
 			if err := json.Unmarshal(payload, &result); err != nil {

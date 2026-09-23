@@ -88,10 +88,11 @@ func (c *rleClient) executeRollout(
 	environmentVersion string,
 	loomBearerToken string,
 	request executeRolloutRequest,
+	onProgress func(executeRolloutProgress) error,
 	errOut io.Writer,
 ) (*executeRolloutResponse, error) {
 	response, err := c.executeRolloutOverWebSocket(
-		ctx, environmentName, environmentVersion, loomBearerToken, request)
+		ctx, environmentName, environmentVersion, loomBearerToken, request, onProgress)
 	if err == nil {
 		return response, nil
 	}

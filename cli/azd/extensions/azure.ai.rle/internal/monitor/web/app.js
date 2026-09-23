@@ -84,6 +84,62 @@ function metric(label, value) {
   byID("metrics").append(card);
 }
 
+function displayRole(role) {
+  return role === "assistant" ? "Assistant" :
+    role === "system" ? "System" :
+      role === "user" ? "User" :
+        role === "tool" ? "Tool" :
+          role === "request" ? "Request" : "Other";
+}
+
+function renderActivitySummary() {
+  const hasTimeline = model.turns?.some((turn) => turn.flow.length) ?? false;
+  byID("activity-summary").hidden = !model.hasConversation && !hasTimeline;
+  byID("tool-activity-count").textContent = model.toolActivity.count === 0
+    ? "No tool calls captured"
+    : `${count(model.toolActivity.count)} tool call${model.toolActivity.count === 1 ? "" : "s"} across model responses`;
+  const names = byID("tool-activity-names");
+  names.replaceChildren();
+  for (const name of model.toolActivity.names) names.append(element("code", name, "tool-name"));
+  if (model.toolActivity.count > 0 && !model.toolActivity.names.length) {
+    names.append(element("span", "Tool names were not reported.", "activity-note"));
+  }
+
+  const timeline = byID("call-timeline");
+  timeline.replaceChildren();
+  for (const turn of model.turns ?? []) {
+    if (!turn.flow.length) continue;
+    const button = element("button", undefined, "timeline-call");
+    button.type = "button";
+    button.setAttribute("aria-label", `Open model call ${turn.position + 1} in the conversation`);
+    button.append(element("span", `Call ${turn.position + 1}`, "timeline-call-label"));
+    const flow = element("span", undefined, "timeline-flow");
+    const hiddenRoles = Math.max(0, turn.flow.length - 7);
+    const visibleRoles = hiddenRoles
+      ? [...turn.flow.slice(0, 6), null, turn.flow.at(-1)]
+      : turn.flow;
+    visibleRoles.forEach((role, index) => {
+      if (index) flow.append(element("span", "→", "timeline-arrow"));
+      flow.append(role === null
+        ? element("span", `+${hiddenRoles}`, "role-chip overflow-chip")
+        : element("span", displayRole(role), `role-chip role-${role}`));
+    });
+    button.append(flow);
+    if (turn.toolCalls.length) {
+      button.append(element("span",
+        `${turn.toolCalls.length} tool call${turn.toolCalls.length === 1 ? "" : "s"}`, "timeline-tools"));
+    }
+    button.addEventListener("click", () => {
+      selectTab("conversation");
+      const details = byID(`conversation-call-${turn.position + 1}`);
+      details.open = true;
+      details.querySelector("summary").focus();
+      details.scrollIntoView({ block: "nearest" });
+    });
+    timeline.append(button);
+  }
+}
+
 function selectTab(name, focus = false) {
   for (const tab of document.querySelectorAll('[role="tab"]')) {
     const selected = tab.id === `tab-${name}`;
@@ -93,6 +149,59 @@ function selectTab(name, focus = false) {
     if (selected && focus) tab.focus();
   }
   if (name === "tokens") renderSequence();
+}
+
+function renderConversationMessage(message, fallbackRole) {
+  const card = element("article", undefined, "conversation-message");
+  const role = typeof message.role === "string" && message.role.trim() ? message.role : fallbackRole;
+  card.append(element("p", role.toUpperCase(), `message-role role-${role.toLowerCase()}`));
+  if (typeof message.content === "string") {
+    card.append(element("p", message.content || "Empty content", "message-content"));
+  } else if (present(message.content)) {
+    const content = element("div", undefined, "message-json");
+    json(content, message.content);
+    card.append(content);
+  } else {
+    card.append(element("p", "No content reported.", "muted"));
+  }
+  if (present(message.tool_calls)) {
+    const tools = element("details", undefined, "message-tools");
+    tools.append(element("summary", "Tool calls"));
+    json(tools, message.tool_calls);
+    card.append(tools);
+  }
+  return card;
+}
+
+function renderConversation() {
+  const container = byID("conversation");
+  container.replaceChildren();
+  if (!model.hasConversation) return;
+  for (const turn of model.turns) {
+    if (!turn.requestMessages.length && turn.responseMessage === null) continue;
+    const details = element("details", undefined, "conversation-turn");
+    details.id = `conversation-call-${turn.position + 1}`;
+    const summaryParts = [
+      `Model call ${turn.position + 1}`,
+      `${turn.requestMessages.length} request message${turn.requestMessages.length === 1 ? "" : "s"}`,
+      turn.raw.finish_reason ? `Finish: ${turn.raw.finish_reason}` : null,
+    ].filter(Boolean);
+    details.append(element("summary", summaryParts.join(" · ")));
+    const body = element("div", undefined, "conversation-body");
+    if (turn.requestMessages.length) {
+      body.append(element("h3", "Request messages"));
+      for (const message of turn.requestMessages) {
+        body.append(renderConversationMessage(message, "request"));
+      }
+    }
+    if (turn.responseMessage !== null) {
+      body.append(element("h3", "Response message"));
+      body.append(renderConversationMessage(turn.responseMessage, "assistant"));
+    }
+    details.append(body);
+    container.append(details);
+  }
+  container.querySelector("details")?.setAttribute("open", "");
 }
 
 function renderGraph(focusKey = null) {
@@ -564,9 +673,17 @@ export function setSnapshot(snapshot) {
     savedAt.removeAttribute("title");
   }
   byID("final-reward").textContent = String(model.response.reward);
+  byID("final-response-panel").hidden = model.finalResponse === null;
+  byID("final-response-text").textContent = model.finalResponsePreview ?? "";
+  byID("final-response-text").classList.toggle("collapsed", model.finalResponseExpandable);
+  byID("final-response-note").hidden = !model.finalResponseReasoningHidden;
+  byID("final-response-toggle").hidden = !model.finalResponseExpandable;
+  byID("final-response-toggle").setAttribute("aria-expanded", "false");
+  byID("final-response-toggle").textContent = "Show full response";
   metric("Episode steps", model.steps?.length);
   metric("Model calls", model.turns?.length);
   metric("Captured sequences", model.graph.sequences?.length);
+  renderActivitySummary();
   const episodeParts = [];
   if (model.episode.kind) episodeParts.push(model.episode.kind);
   if (model.episode.termination_reason) episodeParts.push(`Termination: ${model.episode.termination_reason}`);
@@ -584,6 +701,8 @@ export function setSnapshot(snapshot) {
     }
   });
   renderGraph();
+  byID("tab-conversation").hidden = !model.hasConversation;
+  renderConversation();
   renderDetails();
   // Clear training output even when its panel stays hidden.
   renderSequence();
@@ -600,7 +719,7 @@ export function setSnapshot(snapshot) {
 for (const tab of document.querySelectorAll('[role="tab"]')) {
   tab.addEventListener("click", () => selectTab(tab.id.slice(4)));
   tab.addEventListener("keydown", (event) => {
-    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    const tabs = [...document.querySelectorAll('[role="tab"]')].filter((candidate) => !candidate.hidden);
     let index = tabs.indexOf(tab);
     if (event.key === "ArrowRight") index = (index + 1) % tabs.length;
     else if (event.key === "ArrowLeft") index = (index + tabs.length - 1) % tabs.length;
@@ -686,4 +805,13 @@ byID("access-form").addEventListener("submit", async (event) => {
 });
 
 byID("retry").addEventListener("click", load);
+byID("final-response-toggle").addEventListener("click", () => {
+  const toggle = byID("final-response-toggle");
+  const expanded = toggle.getAttribute("aria-expanded") === "true";
+  toggle.setAttribute("aria-expanded", String(!expanded));
+  toggle.textContent = expanded ? "Show full response" : "Hide full response";
+  byID("final-response-text").textContent = expanded ? model.finalResponsePreview : model.finalResponse;
+  byID("final-response-text").classList.toggle("collapsed", expanded);
+  byID("final-response-note").hidden = !expanded || !model.finalResponseReasoningHidden;
+});
 load();

@@ -106,7 +106,7 @@ func (r ArtifactReader) Get(ctx context.Context, rolloutID string) (Snapshot, er
 		snapshot.Environment, snapshot.SavedAt = metadata.Environment, metadata.SavedAt
 	}
 	response := make(map[string]json.RawMessage)
-	for _, key := range []string{"rollout_id", "reward", "success", "result", "episode"} {
+	for _, key := range []string{"rollout_id", "final_response", "reward", "success", "result", "episode"} {
 		if raw, ok := summary[key]; ok {
 			response[key] = raw
 		}

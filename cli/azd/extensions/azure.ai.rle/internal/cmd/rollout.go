@@ -71,8 +71,8 @@ func newRolloutCommand() *cobra.Command {
 rollout provisions everything a Loom-backed rollout needs and tears it down again: it
 creates a real Loom training session for --model, saves a sampler checkpoint, calls RLE's
 Execute Rollout API with your task (and, for Harness targets, agent input), prints the
-resulting reward and trajectory summary, then closes the Loom session. You never handle
-Loom session or checkpoint identifiers directly.
+live execution milestones followed by the resulting reward and trajectory summary, then
+closes the Loom session. You never handle Loom session or checkpoint identifiers directly.
 
 The response also carries the full capture graph — token ids, logprobs and loss masks —
 which is too large to print and cannot be fetched again once the rollout returns. It is
@@ -270,6 +270,7 @@ func (a *rolloutAction) executeAndSave(
 	); err != nil {
 		return err
 	}
+	progress := newExecuteRolloutProgressRenderer(out)
 	response, err := rle.executeRollout(ctx, target.environmentName, target.version, loomToken, executeRolloutRequest{
 		RolloutID:  rolloutID,
 		Task:       task,
@@ -282,7 +283,7 @@ func (a *rolloutAction) executeAndSave(
 			CheckpointID:    checkpointID,
 			SequenceID:      &sequenceID,
 		},
-	}, errOut)
+	}, progress.Render, errOut)
 	if err != nil {
 		if isRleNotFound(err) {
 			return environmentVersionNotFoundError(target.environmentName, target.version)

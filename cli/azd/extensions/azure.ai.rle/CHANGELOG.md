@@ -1,5 +1,25 @@
 # Release History
 
+## 0.8.15-preview
+
+- `azd ai rle rollout` now displays live Execute Rollout WebSocket progress,
+  including elapsed lifecycle milestones, model-call and environment-action
+  status, cumulative Gym rewards, and episode termination details. Progress
+  sequence and partial-response correlation are validated, dropped-event gaps
+  remain supported, and the terminal `completed` or `error` response stays
+  authoritative.
+- The local rollout dashboard now preserves and displays enriched Execute
+  Rollout results. It includes a collapsed final-response preview, a captured
+  model-conversation tab, tool activity, and a compact call timeline. Full
+  response and conversation content remains available without overwhelming the
+  summary, and older artifacts without enriched fields remain supported.
+- Rollout artifacts now retain the service's `final_response`,
+  `request_messages`, and `response_message` fields so the enriched dashboard
+  can be reopened from saved results without another service request.
+- Loom session polling now accepts both string and structured operation-error
+  payloads, allowing the CLI to report the underlying service failure instead
+  of a JSON decoding error.
+
 ## 0.8.14-preview
 
 - `azd ai rle rollout` now sends the rollout over RLE's Execute Rollout
