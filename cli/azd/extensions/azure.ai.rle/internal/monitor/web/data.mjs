@@ -26,6 +26,34 @@ function validateFields(record, fields, path) {
   for (const [key, predicate] of Object.entries(fields)) optional(record, key, predicate, path);
 }
 
+function messageRole(message, fallback) {
+  if (!isString(message?.role) || !message.role.trim()) return fallback;
+  const role = message.role.trim().toLowerCase();
+  return ["assistant", "system", "tool", "user"].includes(role) ? role : "other";
+}
+
+function toolCallName(call) {
+  if (!isRecord(call)) return null;
+  if (isString(call.function?.name) && call.function.name.trim()) return call.function.name.trim();
+  if (isString(call.name) && call.name.trim()) return call.name.trim();
+  return null;
+}
+
+function finalResponseSummary(value) {
+  if (!isString(value) || !value.trim()) {
+    return { full: null, preview: null, reasoningHidden: false, expandable: false };
+  }
+  const full = value.trim();
+  const withoutReasoning = full.replace(/<think(?:\s[^>]*)?>[\s\S]*?<\/think\s*>/gi, "").trim();
+  const preview = withoutReasoning || full;
+  return {
+    full,
+    preview,
+    reasoningHidden: preview !== full,
+    expandable: preview !== full || preview.length > 420 || preview.split(/\r?\n/).length > 6,
+  };
+}
+
 // Leave the parsed response unchanged; derive only display values, never missing metrics.
 export function mapSnapshot(snapshot) {
   requireValue(isRecord(snapshot), "expected an object");
@@ -34,6 +62,7 @@ export function mapSnapshot(snapshot) {
   requireValue(isString(response.rollout_id) && response.rollout_id.trim().length > 0, "response.rollout_id is required");
   requireValue(isNumber(response.reward), "response.reward must be a finite number");
   if (Object.hasOwn(response, "success")) requireValue(isBoolean(response.success), "response.success must be a boolean");
+  optional(response, "final_response", isString, "response");
   requireValue(isString(snapshot.source) && snapshot.source.trim().length > 0, "source is required");
   optional(snapshot, "environment", isRecord, "snapshot");
   const environment = snapshot.environment ?? null;
@@ -68,6 +97,8 @@ export function mapSnapshot(snapshot) {
   turns?.forEach((turn, index) => validateFields(turn, {
     node_id: isString, index: isCount, root_id: isString, n_prompt: isCount, n_sampled: isCount,
     n_tools: isCount, finish_reason: isString, discarded: isBoolean,
+    request_messages: (value) => Array.isArray(value) && value.every(isRecord),
+    response_message: isRecord,
   }, `rollout.turns[${index}]`));
 
   const turnsByID = new Map();
@@ -89,16 +120,39 @@ export function mapSnapshot(snapshot) {
     }
     return { raw: step, number, reward: step.reward ?? null, turnPositions };
   }) ?? null;
-  const mappedTurns = turns?.map((turn, position) => ({
-    raw: turn, position, label: `Turn ${position + 1}`,
-    stepNumbers: stepNumbersByTurn.get(position) ?? [],
-    prompt: graph.capture_level === "tokens" ? turn.n_prompt ?? null : null,
-    sampled: graph.capture_level === "tokens" ? turn.n_sampled ?? null : null,
-  })) ?? null;
+  const mappedTurns = turns?.map((turn, position) => {
+    const requestMessages = turn.request_messages ?? [];
+    const responseMessage = turn.response_message ?? null;
+    const toolCalls = Array.isArray(responseMessage?.tool_calls)
+      ? responseMessage.tool_calls.filter(isRecord)
+      : [];
+    return {
+      raw: turn, position, label: `Turn ${position + 1}`,
+      stepNumbers: stepNumbersByTurn.get(position) ?? [],
+      prompt: graph.capture_level === "tokens" ? turn.n_prompt ?? null : null,
+      sampled: graph.capture_level === "tokens" ? turn.n_sampled ?? null : null,
+      requestMessages,
+      responseMessage,
+      toolCalls,
+      flow: [
+        ...requestMessages.map((message) => messageRole(message, "request")),
+        ...(responseMessage === null ? [] : [messageRole(responseMessage, "assistant")]),
+      ],
+    };
+  }) ?? null;
+  const finalResponse = finalResponseSummary(response.final_response);
+  const hasConversation = mappedTurns?.some((turn) =>
+    turn.requestMessages.length > 0 || turn.responseMessage !== null) ?? false;
+  const allToolCalls = mappedTurns?.flatMap((turn) => turn.toolCalls) ?? [];
+  const toolNames = [...new Set(allToolCalls.map(toolCallName).filter(isString))];
 
   return { response, source: snapshot.source, savedAt: snapshot.saved_at, environment, warnings: snapshot.warnings ?? [],
     episode, graph, stats,
     steps: mappedSteps, turns: mappedTurns, tokensCaptured: graph.capture_level === "tokens",
+    finalResponse: finalResponse.full, finalResponsePreview: finalResponse.preview,
+    finalResponseReasoningHidden: finalResponse.reasoningHidden,
+    finalResponseExpandable: finalResponse.expandable,
+    hasConversation, toolActivity: { count: allToolCalls.length, names: toolNames },
     outcome: response.success === true ? "Task succeeded" : response.success === false ? "Task unsuccessful" : null };
 }
 

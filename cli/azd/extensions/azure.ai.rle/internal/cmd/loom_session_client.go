@@ -96,6 +96,21 @@ type loomAPIError struct {
 	Code    string `json:"code,omitempty"`
 }
 
+func (e *loomAPIError) UnmarshalJSON(data []byte) error {
+	var message string
+	if err := json.Unmarshal(data, &message); err == nil {
+		e.Message = message
+		return nil
+	}
+	type object loomAPIError
+	var decoded object
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*e = loomAPIError(decoded)
+	return nil
+}
+
 type loomHTTPError struct {
 	statusCode int
 	body       string

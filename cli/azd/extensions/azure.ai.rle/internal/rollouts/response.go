@@ -13,13 +13,14 @@ import (
 
 // Response describes the fields used by the CLI; Raw retains the complete service response.
 type Response struct {
-	RolloutID string          `json:"rollout_id"`
-	Rollout   json.RawMessage `json:"rollout"`
-	Reward    float64         `json:"reward"`
-	Success   *bool           `json:"success,omitempty"`
-	Result    json.RawMessage `json:"result,omitempty"`
-	Episode   *Episode        `json:"episode,omitempty"`
-	Raw       json.RawMessage `json:"-"`
+	RolloutID     string          `json:"rollout_id"`
+	Rollout       json.RawMessage `json:"rollout"`
+	FinalResponse *string         `json:"final_response,omitempty"`
+	Reward        float64         `json:"reward"`
+	Success       *bool           `json:"success,omitempty"`
+	Result        json.RawMessage `json:"result,omitempty"`
+	Episode       *Episode        `json:"episode,omitempty"`
+	Raw           json.RawMessage `json:"-"`
 }
 
 // Episode contains Gym/OpenEnv annotations, not a task-level success verdict.

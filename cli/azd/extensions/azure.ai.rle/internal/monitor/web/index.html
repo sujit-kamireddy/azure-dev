@@ -54,6 +54,30 @@
           </div>
           <p class="run-identity"><span class="muted">ROLLOUT</span> <code id="rollout-id"></code></p>
           <section id="metrics" class="metrics" aria-label="Captured activity"></section>
+          <section id="activity-summary" class="activity-summary" aria-label="Model activity summary" hidden>
+            <article id="tool-activity-panel" class="activity-card" aria-labelledby="tool-activity-title">
+              <p id="tool-activity-title" class="eyebrow">TOOL ACTIVITY</p>
+              <p id="tool-activity-count" class="activity-value"></p>
+              <div id="tool-activity-names" class="tool-name-list"></div>
+            </article>
+            <article id="call-timeline-panel" class="activity-card timeline-card" aria-labelledby="call-timeline-title">
+              <div class="activity-heading">
+                <p id="call-timeline-title" class="eyebrow">CALL TIMELINE</p>
+                <p class="activity-note">Captured order; timing is not reported.</p>
+              </div>
+              <div id="call-timeline" class="call-timeline"></div>
+            </article>
+          </section>
+          <section id="final-response-panel" class="final-response-panel" aria-labelledby="final-response-title" hidden>
+            <div class="final-response-heading">
+              <p id="final-response-title" class="eyebrow">FINAL RESPONSE</p>
+              <button id="final-response-toggle" type="button" aria-expanded="false" aria-controls="final-response-text" hidden>
+                Show full response
+              </button>
+            </div>
+            <p id="final-response-note" class="final-response-note" hidden>Reasoning is hidden in this preview.</p>
+            <p id="final-response-text"></p>
+          </section>
         </div>
         <div class="reward-hero"><p class="eyebrow">FINAL REWARD</p><p id="final-reward"></p><p class="reward-caption">Reported reward<br>No normalization applied</p></div>
         <div class="snapshot-provenance">
@@ -65,6 +89,7 @@
       <section class="explorer" aria-label="Rollout explorer">
         <div class="tab-bar" role="tablist" aria-label="Rollout detail views">
           <button id="tab-graph" role="tab" type="button" aria-selected="true" aria-controls="panel-graph" tabindex="0">Rollout graph</button>
+          <button id="tab-conversation" role="tab" type="button" aria-selected="false" aria-controls="panel-conversation" tabindex="-1" hidden>Model conversation</button>
           <button id="tab-tokens" role="tab" type="button" aria-selected="false" aria-controls="panel-tokens" tabindex="-1">Tokens and Metrics</button>
           <button id="tab-details" role="tab" type="button" aria-selected="false" aria-controls="panel-details" tabindex="-1">Rollout Stats</button>
         </div>
@@ -85,6 +110,10 @@
             <aside id="graph-inspector" aria-label="Selected model call details"></aside>
           </div>
           <p class="graph-footer"><span id="graph-count"></span><span>Click or focus a call and press Enter · Scroll to explore</span></p>
+        </section>
+        <section id="panel-conversation" role="tabpanel" aria-labelledby="tab-conversation" tabindex="0" hidden>
+          <div class="explorer-heading"><div><h2>Model conversation</h2><p class="section-note">Messages sent to and returned by the model for each captured call. Tool manifests are intentionally omitted by the service.</p></div></div>
+          <div id="conversation"></div>
         </section>
         <section id="panel-tokens" role="tabpanel" aria-labelledby="tab-tokens" tabindex="0" hidden>
           <div class="explorer-heading"><div><h2>Sequence overview</h2><p class="section-note">Counts computed from the saved arrays. Positions are zero-based within the selected sequence, not time or billing usage.</p></div></div>

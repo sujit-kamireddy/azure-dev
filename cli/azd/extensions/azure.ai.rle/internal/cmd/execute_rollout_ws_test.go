@@ -95,6 +95,25 @@ func stubExecuteRolloutWebSocketServer(
 	reply func(header executeRolloutFrameHeader, payload []byte) (executeRolloutFrameHeader, any),
 ) *httptest.Server {
 	t.Helper()
+	return stubExecuteRolloutWebSocketStreamServer(
+		t,
+		func(header executeRolloutFrameHeader, payload []byte) []executeRolloutTestReply {
+			replyHeader, replyPayload := reply(header, payload)
+			return []executeRolloutTestReply{{header: replyHeader, payload: replyPayload}}
+		},
+	)
+}
+
+type executeRolloutTestReply struct {
+	header  executeRolloutFrameHeader
+	payload any
+}
+
+func stubExecuteRolloutWebSocketStreamServer(
+	t *testing.T,
+	reply func(header executeRolloutFrameHeader, payload []byte) []executeRolloutTestReply,
+) *httptest.Server {
+	t.Helper()
 	upgrader := websocket.Upgrader{Subprotocols: []string{executeRolloutSubprotocol}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Sec-WebSocket-Protocol"); !strings.Contains(got, executeRolloutSubprotocol) {
@@ -119,15 +138,16 @@ func stubExecuteRolloutWebSocketServer(
 			t.Errorf("decode: %v", err)
 			return
 		}
-		replyHeader, replyPayload := reply(header, payload)
-		frame, err := encodeExecuteRolloutFrame(replyHeader, replyPayload)
-		if err != nil {
-			t.Errorf("encode: %v", err)
-			return
-		}
-		if err := connection.WriteMessage(websocket.BinaryMessage, frame); err != nil {
-			t.Errorf("write: %v", err)
-			return
+		for _, response := range reply(header, payload) {
+			frame, err := encodeExecuteRolloutFrame(response.header, response.payload)
+			if err != nil {
+				t.Errorf("encode: %v", err)
+				return
+			}
+			if err := connection.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+				t.Errorf("write: %v", err)
+				return
+			}
 		}
 		if _, _, err := connection.ReadMessage(); !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 			t.Errorf("expected a normal client close after the rollout response, got %v", err)
@@ -185,8 +205,9 @@ func TestExecuteRolloutOverWebSocketReturnsTheCompletedFrame(t *testing.T) {
 
 	client := newRleClientWithCredential("https://rle.test"+testFoundryProjectPath, &testTokenCredential{})
 	response, err := client.executeRollout(
-		context.Background(), "code_rl", "1.0.0", "loom-token",
+		t.Context(), "code_rl", "1.0.0", "loom-token",
 		executeRolloutRequest{RolloutID: "abc123", Task: json.RawMessage(`{"prompt":"hi"}`)},
+		nil,
 		nil,
 	)
 	if err != nil {
@@ -217,8 +238,9 @@ func TestExecuteRolloutOverWebSocketMapsAnErrorFrameToAnRleError(t *testing.T) {
 
 	client := newRleClientWithCredential("https://rle.test"+testFoundryProjectPath, &testTokenCredential{})
 	_, err := client.executeRollout(
-		context.Background(), "code_rl", "1.0.0", "loom-token",
+		t.Context(), "code_rl", "1.0.0", "loom-token",
 		executeRolloutRequest{RolloutID: "abc123"},
+		nil,
 		nil,
 	)
 	if err == nil {
@@ -262,8 +284,9 @@ func TestExecuteRolloutFallsBackToHTTPWhenTheUpgradeIsRejected(t *testing.T) {
 	client := testRleClientForServer(t, rleServer.URL)
 	var errOut bytes.Buffer
 	response, err := client.executeRollout(
-		context.Background(), "code_rl", "1.0.0", "loom-token",
+		t.Context(), "code_rl", "1.0.0", "loom-token",
 		executeRolloutRequest{RolloutID: "abc123"},
+		nil,
 		&errOut,
 	)
 	if err != nil {
@@ -303,8 +326,9 @@ func TestExecuteRolloutDoesNotFallBackAfterTheUpgradeSucceeds(t *testing.T) {
 
 	client := testRleClientForServer(t, rleServer.URL)
 	if _, err := client.executeRollout(
-		context.Background(), "code_rl", "1.0.0", "loom-token",
+		t.Context(), "code_rl", "1.0.0", "loom-token",
 		executeRolloutRequest{RolloutID: "abc123"},
+		nil,
 		nil,
 	); err == nil {
 		t.Fatal("expected the error frame to fail the rollout")
@@ -345,8 +369,9 @@ func TestExecuteRolloutFallsBackWhenTheServerDoesNotSelectTheSubprotocol(t *test
 	client := testRleClientForServer(t, rleServer.URL)
 	var errOut bytes.Buffer
 	if _, err := client.executeRollout(
-		context.Background(), "code_rl", "1.0.0", "loom-token",
+		t.Context(), "code_rl", "1.0.0", "loom-token",
 		executeRolloutRequest{RolloutID: "abc123"},
+		nil,
 		&errOut,
 	); err != nil {
 		t.Fatal(err)
@@ -359,5 +384,96 @@ func TestExecuteRolloutFallsBackWhenTheServerDoesNotSelectTheSubprotocol(t *test
 	}
 	if !strings.Contains(errOut.String(), "Falling back to the HTTP transport") {
 		t.Fatalf("expected the fallback to be reported, got %q", errOut.String())
+	}
+}
+
+func TestExecuteRolloutOverWebSocketStreamsProgressBeforeCompletion(t *testing.T) {
+	server := stubExecuteRolloutWebSocketStreamServer(
+		t,
+		func(header executeRolloutFrameHeader, _ []byte) []executeRolloutTestReply {
+			return []executeRolloutTestReply{
+				{
+					header: executeRolloutFrameHeader{
+						Type:      executeRolloutFrameProgress,
+						RolloutID: header.RolloutID,
+					},
+					payload: map[string]any{
+						"message":    "Waiting for a model response for step 1/5.",
+						"phase":      "model_call",
+						"status":     "started",
+						"sequence":   1,
+						"elapsed_ms": 1250,
+					},
+				},
+				{
+					header: executeRolloutFrameHeader{
+						Type:      executeRolloutFrameProgress,
+						RolloutID: header.RolloutID,
+					},
+					payload: map[string]any{
+						"message":    "Step 1/5 finished; reward 0.25, total reward 0.25.",
+						"phase":      "environment_step",
+						"status":     "completed",
+						"sequence":   3,
+						"elapsed_ms": 4200,
+						"partial_response": map[string]any{
+							"rollout_id": header.RolloutID,
+							"reward":     0.25,
+							"episode": map[string]any{
+								"kind": "gym_openenv",
+								"steps": []map[string]any{{
+									"capture_node_id": "node-1",
+									"reward":          0.25,
+									"episode_done":    false,
+								}},
+							},
+						},
+					},
+				},
+				{
+					header: executeRolloutFrameHeader{
+						Type:      executeRolloutFrameCompleted,
+						RolloutID: header.RolloutID,
+					},
+					payload: map[string]any{
+						"rollout_id": header.RolloutID,
+						"reward":     1.0,
+						"success":    true,
+					},
+				},
+			}
+		},
+	)
+	stubExecuteRolloutDialer(t, server.URL, nil)
+
+	client := newRleClientWithCredential("https://rle.test"+testFoundryProjectPath, &testTokenCredential{})
+	var progress []executeRolloutProgress
+	response, err := client.executeRollout(
+		t.Context(), "code_rl", "1.0.0", "loom-token",
+		executeRolloutRequest{RolloutID: "abc123"},
+		func(update executeRolloutProgress) error {
+			progress = append(progress, update)
+			return nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Reward != 1 || response.Success == nil || !*response.Success {
+		t.Fatalf("unexpected response %#v", response)
+	}
+	if len(progress) != 2 {
+		t.Fatalf("expected 2 progress updates, got %#v", progress)
+	}
+	if progress[0].Sequence != 1 || progress[1].Sequence != 3 {
+		t.Fatalf("sequence gaps should be accepted, got %#v", progress)
+	}
+	if progress[1].PartialResponse == nil ||
+		progress[1].PartialResponse.Reward == nil ||
+		*progress[1].PartialResponse.Reward != 0.25 ||
+		progress[1].PartialResponse.Episode == nil ||
+		len(progress[1].PartialResponse.Episode.Steps) != 1 {
+		t.Fatalf("unexpected partial response %#v", progress[1].PartialResponse)
 	}
 }

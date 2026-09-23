@@ -36,6 +36,7 @@ func fixture(t *testing.T, summary, graph string) *ArtifactReader {
 
 func TestArtifactsAssembleExistingFilesWithoutLosingNumbers(t *testing.T) {
 	reader := fixture(t, `{"rollout_id":"`+testID+`","reward":0.12345678901234567890,
+		"final_response":"Final answer",
 		"episode":{"ungraded":true,"steps":[]},"result":{"huge":9007199254740993},
 		"artifact":{"version":1,"saved_at":"2026-09-21T20:00:00Z","has_graph":true,
 		"environment":{"name":"math_rl","version":"2.1.0"}}}`,
@@ -44,7 +45,10 @@ func TestArtifactsAssembleExistingFilesWithoutLosingNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"0.12345678901234567890", "9007199254740993", `"ungraded":true`, `"future_field"`} {
+	for _, want := range []string{
+		"0.12345678901234567890", "9007199254740993", `"final_response":"Final answer"`,
+		`"ungraded":true`, `"future_field"`,
+	} {
 		if !strings.Contains(string(snapshot.Response), want) {
 			t.Fatalf("missing original value %s: %s", want, snapshot.Response)
 		}

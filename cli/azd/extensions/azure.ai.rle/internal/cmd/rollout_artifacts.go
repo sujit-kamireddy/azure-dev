@@ -40,10 +40,11 @@ type rolloutArtifactFile struct {
 
 // rolloutSummary contains the outcome and capture shape without token arrays.
 type rolloutSummary struct {
-	RolloutID string          `json:"rollout_id"`
-	Reward    float64         `json:"reward"`
-	Success   *bool           `json:"success,omitempty"`
-	Result    json.RawMessage `json:"result,omitempty"`
+	RolloutID     string          `json:"rollout_id"`
+	FinalResponse *string         `json:"final_response,omitempty"`
+	Reward        float64         `json:"reward"`
+	Success       *bool           `json:"success,omitempty"`
+	Result        json.RawMessage `json:"result,omitempty"`
 
 	Episode  *rollouts.Episode          `json:"episode,omitempty"`
 	Artifact *rollouts.ArtifactMetadata `json:"artifact,omitempty"`
@@ -158,18 +159,19 @@ func writeRolloutArtifacts(
 	}
 
 	summary := rolloutSummary{
-		RolloutID:    response.RolloutID,
-		Reward:       response.Reward,
-		Success:      response.Success,
-		Result:       response.Result,
-		Episode:      response.Episode,
-		CaptureLevel: graph.CaptureLevel,
-		RolloutType:  graph.RolloutType,
-		Trainable:    graph.Trainable,
-		Stats:        graph.Stats,
-		Validation:   graph.Validation,
-		Metadata:     graph.Metadata,
-		Artifact:     &export,
+		RolloutID:     response.RolloutID,
+		FinalResponse: response.FinalResponse,
+		Reward:        response.Reward,
+		Success:       response.Success,
+		Result:        response.Result,
+		Episode:       response.Episode,
+		CaptureLevel:  graph.CaptureLevel,
+		RolloutType:   graph.RolloutType,
+		Trainable:     graph.Trainable,
+		Stats:         graph.Stats,
+		Validation:    graph.Validation,
+		Metadata:      graph.Metadata,
+		Artifact:      &export,
 	}
 
 	for i, sequence := range graph.Sequences {
@@ -229,7 +231,7 @@ func writeRolloutArtifacts(
 		if err := json.Unmarshal(response.Raw, &original); err != nil {
 			return nil, fmt.Errorf("decode original rollout response: %w", err)
 		}
-		for _, key := range []string{"rollout_id", "reward", "success", "result", "episode"} {
+		for _, key := range []string{"rollout_id", "final_response", "reward", "success", "result", "episode"} {
 			delete(fields, key)
 			if value, ok := original[key]; ok {
 				fields[key] = value

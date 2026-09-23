@@ -24,6 +24,8 @@ const realGymRolloutGraph = `{
   "turns": [
     {"node_id": "d3078af988d4", "index": 0, "root_id": "d3078af988d4", "n_sampled": 2894,
      "n_prompt": 137, "n_tools": 0, "finish_reason": "stop",
+     "request_messages": [{"role":"user","content":"Solve the problem"}],
+     "response_message": {"role":"assistant","content":"Final answer"},
      "sampling_params": {"temperature": 1, "top_p": 1}, "discarded": false}
   ],
   "stats": {"n_turns": 1, "n_roots": 1, "n_leaves": 1, "n_forks": 0, "n_discarded": 0,
@@ -42,11 +44,12 @@ const realGymRolloutGraph = `{
 
 func testGymResponse() *executeRolloutResponse {
 	return &executeRolloutResponse{
-		RolloutID: "4f53e172018b9d7f74825dc348e42386",
-		Rollout:   json.RawMessage(realGymRolloutGraph),
-		Reward:    1,
-		Success:   new(false),
-		Result:    json.RawMessage(`{"correct":true,"format":true}`),
+		RolloutID:     "4f53e172018b9d7f74825dc348e42386",
+		Rollout:       json.RawMessage(realGymRolloutGraph),
+		FinalResponse: new("Final answer"),
+		Reward:        1,
+		Success:       new(false),
+		Result:        json.RawMessage(`{"correct":true,"format":true}`),
 		Episode: &rollouts.Episode{
 			Kind:              "gym_openenv",
 			TerminationReason: "done",
@@ -139,6 +142,9 @@ func TestWriteRolloutArtifactsSummaryIndexesSequencesWithoutTheirArrays(t *testi
 
 	if summary.Reward != 1 || summary.Success == nil || *summary.Success {
 		t.Fatalf("expected the outcome to be carried, got reward=%v success=%v", summary.Reward, summary.Success)
+	}
+	if summary.FinalResponse == nil || *summary.FinalResponse != "Final answer" {
+		t.Fatalf("expected the final response to be carried, got %v", summary.FinalResponse)
 	}
 	if summary.CaptureLevel != "tokens" || summary.RolloutType != "train" {
 		t.Fatalf("expected the capture level to be carried, got %q/%q", summary.CaptureLevel, summary.RolloutType)
