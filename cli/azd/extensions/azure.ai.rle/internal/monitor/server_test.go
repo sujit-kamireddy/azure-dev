@@ -21,34 +21,26 @@ import (
 )
 
 const testHost = "127.0.0.1:12345"
-const testToken = "test-session-code"
 
 func TestHandlerAuthorizationAndRoutes(t *testing.T) {
 	snapshot := rollouts.Snapshot{
 		Response: json.RawMessage(`{"rollout_id":"abc","reward":1,"result":"<script>alert(1)</script>"}`),
 		Source:   "Saved local result",
 	}
-	handler, err := newHandler(snapshot, testHost, testToken)
+	handler, err := newHandler(snapshot, testHost)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name, method, path, host, origin, authorization, cookie string
-		status                                                  int
+		name, method, path, host, origin string
+		status                           int
 	}{
 		{name: "public shell", method: "GET", path: "/", status: 200},
-		{name: "no cookie", method: "GET", path: "/api/rollout", status: 401},
-		{name: "bad cookie", method: "GET", path: "/api/rollout", cookie: "wrong", status: 401},
-		{name: "authorized", method: "GET", path: "/api/rollout", cookie: testToken, status: 200},
-		{name: "foreign host", method: "GET", path: "/api/rollout", host: "evil.test", cookie: testToken, status: 403},
-		{name: "foreign origin", method: "GET", path: "/api/rollout", origin: "https://evil.test",
-			cookie: testToken, status: 403},
-		{name: "sign in", method: "POST", path: "/session", authorization: "Bearer " + testToken, status: 204},
-		{name: "sign in rejects foreign origin", method: "POST", path: "/session",
-			authorization: "Bearer " + testToken, origin: "http://evil.test", status: 403},
-		{name: "wrong code", method: "POST", path: "/session", authorization: "Bearer wrong", status: 401},
-		{name: "read only", method: "POST", path: "/api/rollout", cookie: testToken, status: 405},
-		{name: "unknown route", method: "GET", path: "/api/other", cookie: testToken, status: 404},
+		{name: "rollout data", method: "GET", path: "/api/rollout", status: 200},
+		{name: "foreign host", method: "GET", path: "/api/rollout", host: "evil.test", status: 403},
+		{name: "foreign origin", method: "GET", path: "/api/rollout", origin: "https://evil.test", status: 403},
+		{name: "read only", method: "POST", path: "/api/rollout", status: 405},
+		{name: "unknown route", method: "GET", path: "/api/other", status: 404},
 		{name: "no directories", method: "GET", path: "/web/", status: 404},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,12 +49,6 @@ func TestHandlerAuthorizationAndRoutes(t *testing.T) {
 				request.Host = tc.host
 			}
 			request.Header.Set("Origin", tc.origin)
-			request.Header.Set("Authorization", tc.authorization)
-			if tc.cookie != "" {
-				request.AddCookie(&http.Cookie{
-					Name: sessionCookie + "-" + strings.ReplaceAll(testHost, ":", "-"), Value: tc.cookie,
-				})
-			}
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
 			if recorder.Code != tc.status {
@@ -72,13 +58,7 @@ func TestHandlerAuthorizationAndRoutes(t *testing.T) {
 				recorder.Header().Get("Content-Security-Policy") == "" {
 				t.Fatal("missing privacy/security headers")
 			}
-			if tc.status == 204 {
-				cookies := recorder.Result().Cookies()
-				if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
-					t.Fatalf("unexpected session cookie: %v", cookies)
-				}
-			}
-			if tc.name == "authorized" {
+			if tc.name == "rollout data" {
 				var got rollouts.Snapshot
 				if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
 					t.Fatal(err)
@@ -87,14 +67,14 @@ func TestHandlerAuthorizationAndRoutes(t *testing.T) {
 					t.Fatal("missing rollout response")
 				}
 			} else if strings.Contains(recorder.Body.String(), "alert(1)") {
-				t.Fatal("result leaked outside authorized data route")
+				t.Fatal("result leaked outside the data route")
 			}
 		})
 	}
 }
 
 func TestModuleAssetsUseJavaScriptMIMEType(t *testing.T) {
-	handler, err := newHandler(rollouts.Snapshot{Response: json.RawMessage(`{}`)}, testHost, testToken)
+	handler, err := newHandler(rollouts.Snapshot{Response: json.RawMessage(`{}`)}, testHost)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +131,7 @@ func TestRunServesAndStops(t *testing.T) {
 			}
 			link := strings.TrimPrefix(strings.Split(output, "\n")[0], "Rollout monitor: ")
 			if strings.Contains(link, "#") || strings.Contains(link, "?") {
-				t.Fatal("printed URL contains credentials")
+				t.Fatal("printed URL contains unexpected query or fragment")
 			}
 			client := &http.Client{Timeout: 5 * time.Second}
 			response, err := client.Get(link)
@@ -164,9 +144,9 @@ func TestRunServesAndStops(t *testing.T) {
 			}
 			if !noBrowser {
 				select {
-				case link := <-opened:
-					if !strings.Contains(link, "#token=") {
-						t.Fatal("automatic browser link lacks bootstrap token")
+				case openedLink := <-opened:
+					if openedLink != link {
+						t.Fatalf("automatic browser link %q does not match printed link %q", openedLink, link)
 					}
 				case <-time.After(5 * time.Second):
 					t.Fatal("browser not opened")

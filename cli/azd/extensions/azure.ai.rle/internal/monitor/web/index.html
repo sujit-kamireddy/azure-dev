@@ -22,19 +22,6 @@
   <main id="main" tabindex="-1">
     <h1 class="sr-only">Rollout summary</h1>
     <p id="load-status" class="notice" role="status">Loading saved snapshot…</p>
-    <section id="access-panel" class="panel access-panel" aria-labelledby="access-title" hidden>
-      <h2 id="access-title">Unlock this snapshot</h2>
-      <p id="access-description" class="muted">Enter the local access code printed in the terminal where you started the monitor.</p>
-      <form id="access-form" method="post" action="/session">
-        <label for="access-code">Local access code</label>
-        <div class="access-controls">
-          <input id="access-code" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"
-            aria-describedby="access-description access-error" required>
-          <button id="unlock" type="submit">Unlock snapshot</button>
-        </div>
-        <p id="access-error" class="access-error" role="alert"></p>
-      </form>
-    </section>
     <section id="load-error" class="error-panel" aria-labelledby="error-title" hidden>
       <h2 id="error-title">Snapshot unavailable</h2>
       <p id="error-message" role="alert"></p>

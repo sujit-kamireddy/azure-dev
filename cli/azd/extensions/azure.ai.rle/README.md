@@ -497,22 +497,17 @@ failure; the tree says so rather than showing an unexplained small file.
 
 Use `--output-dir` to write somewhere other than `.output`. A rollout that
 succeeds but cannot write its artifacts still reports its reward and exits
-successfully, with a warning — the compute is already spent. In development
-mode, the warning also notes that the dashboard was skipped. Existing rollout
+successfully, with a warning — the compute is already spent. The warning also
+notes that the dashboard was skipped. Existing rollout
 directories are never overwritten; use a new rollout ID
 or a different output root. The summary is published last, after the other files.
 
-## Monitor a completed rollout (development only)
+## Monitor a completed rollout
 
 Open a local, read-only dashboard to explore a saved rollout's reward,
-environment, model-call graph, and token metrics. Enable development mode:
+environment, model-call graph, and token metrics.
 
-```powershell
-$env:AZD_AI_RLE_ENABLE = "true"
-$env:AZD_AI_RLE_ENABLE_ALL = "true"
-```
-
-In development mode, every rollout opens its dashboard when execution finishes:
+Every rollout opens its dashboard when execution finishes:
 
 ```powershell
 azd ai rle rollout --task-file task.json
@@ -542,9 +537,8 @@ monitor without deleting saved artifacts.
 | Option | When to use it |
 | --- | --- |
 | `--output-dir <path>` | Read from an artifact root other than `.output` in the current folder. Pass the parent of the rollout-ID directories, not an individual rollout folder. |
-| `--no-browser` | On standalone `monitor`, print a link instead of opening the browser. Open the link and enter the local access code printed in the terminal. |
+| `--no-browser` | On standalone `monitor`, print a link instead of opening the browser. Open the printed link yourself. |
 
-The automatically opened browser handles the local access code for you.
 `--no-prompt` does not disable browser launching or stop the monitor.
 `--output` is not supported on standalone `monitor`.
 
@@ -559,6 +553,9 @@ Execution completion does not imply task success.
 
 **Treat saved artifacts as sensitive:** they may contain customer content.
 Keep `.output` out of source control and delete artifacts when no longer needed.
+The dashboard's local HTTP server binds to loopback (`127.0.0.1`) only and is not
+reachable from other machines, but it does not require a credential — any other
+process or user on the same machine can query it while `monitor` is running.
 
 ## Submit an RLE-backed fine-tuning job (experimental)
 

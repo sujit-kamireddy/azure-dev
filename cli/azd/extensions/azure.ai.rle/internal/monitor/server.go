@@ -6,7 +6,6 @@ package monitor
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,14 +14,11 @@ import (
 	"net"
 	"net/http"
 	"path"
-	"strings"
 	"time"
 
 	"azure.ai.rle/internal/rollouts"
 	"azure.ai.rle/internal/ui"
 )
-
-const sessionCookie = "azd-rle-monitor-session"
 
 // Run loads a rollout and serves it until cancellation. Only the reader knows where the data lives.
 func Run(
@@ -41,11 +37,7 @@ func Run(
 		return fmt.Errorf("start rollout monitor: %w", err)
 	}
 	defer listener.Close()
-	token, err := ui.NewSessionToken()
-	if err != nil {
-		return err
-	}
-	handler, err := newHandler(snapshot, listener.Addr().String(), token)
+	handler, err := newHandler(snapshot, listener.Addr().String())
 	if err != nil {
 		return err
 	}
@@ -54,16 +46,12 @@ func Run(
 	go func() { done <- server.Serve(listener) }()
 	defer func() { _ = server.Close() }()
 
-	// The fragment never reaches HTTP access logs. The browser exchanges it for an HttpOnly cookie.
 	link := "http://" + listener.Addr().String() + "/"
-	if _, err := fmt.Fprintf(out,
-		"Rollout monitor: %s\nLocal access code: %s\nPress Ctrl+C to stop the local monitor.\n", link, token,
-	); err != nil {
+	if _, err := fmt.Fprintf(out, "Rollout monitor: %s\nPress Ctrl+C to stop the local monitor.\n", link); err != nil {
 		return err
 	}
 	if !noBrowser {
-		if err := ui.OpenBrowser(link + "#token=" + token); err != nil {
-			// Browser errors can contain the launch URL and its local session credential.
+		if err := ui.OpenBrowser(link); err != nil {
 			if _, err := fmt.Fprintln(errOut, "Warning: could not open the browser. Open the monitor link above."); err != nil {
 				return err
 			}
@@ -88,7 +76,7 @@ func Run(
 	}
 }
 
-func newHandler(snapshot rollouts.Snapshot, host, token string) (http.Handler, error) {
+func newHandler(snapshot rollouts.Snapshot, host string) (http.Handler, error) {
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("encode rollout snapshot: %w", err)
@@ -98,24 +86,7 @@ func newHandler(snapshot rollouts.Snapshot, host, token string) (http.Handler, e
 		return nil, fmt.Errorf("load monitor assets: %w", err)
 	}
 	mux := http.NewServeMux()
-	// Cookies are not port-scoped; give concurrent monitors independent sessions.
-	cookieName := sessionCookie + "-" + strings.ReplaceAll(host, ":", "-")
-	mux.HandleFunc("POST /session", func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		http.SetCookie(w, &http.Cookie{ //nolint:gosec // Loopback HTTP; token, host and origin checks protect this session.
-			Name: cookieName, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode,
-		})
-		w.WriteHeader(http.StatusNoContent)
-	})
 	mux.HandleFunc("GET /api/rollout", func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie(cookieName)
-		if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(token)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(data)
 	})

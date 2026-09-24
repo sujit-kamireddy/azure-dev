@@ -258,15 +258,6 @@ meter::-moz-meter-bar { background: #5a80df; border-radius: 4px; }
 .section-block { margin-top: 20px; }
 .error-panel { background: #fff4ef; color: #893811; border: 1px solid #e9cebd; border-radius: 10px; padding: 24px; }
 .error-panel p { margin: 10px 0 18px; }
-.access-panel { max-width: 600px; margin: 30px auto; padding: 28px; }
-.access-panel h2 { margin-bottom: 10px; font-size: 18px; }
-.access-panel form { margin-top: 24px; }
-.access-panel label { display: block; margin-bottom: 8px; }
-.access-controls { display: flex; gap: 12px; }
-.access-controls input { width: 100%; min-width: 0; border: 1px solid #b4c2d6; border-radius: 6px; padding: 10px 12px; background: #fff; color: #24304a; }
-.access-controls button { flex-shrink: 0; background: #365edb; border-color: #365edb; color: #fff; }
-.access-error { margin-top: 12px; color: #893811; font-size: 15px; }
-.access-error:empty { display: none; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflow: auto; font: 13px/1.7 ui-monospace, Consolas, monospace; background: #f6f8fc; border: 1px solid var(--line); border-radius: 7px; padding: 14px; margin: 10px 0 16px; color: #485b7a; tab-size: 2; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 :root[data-theme="dark"] {
@@ -355,8 +346,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 :where([data-theme="dark"]) meter::-webkit-meter-bar { background: #34435b; }
 :where([data-theme="dark"]) .notice { color: #c0d1ef; background: #22334c; border-color: #425b7d; }
 :where([data-theme="dark"]) .error-panel { color: #f0beb0; background: #3b2926; border-color: #775248; }
-:where([data-theme="dark"]) .access-controls input { color: var(--text); background: var(--surface); border-color: var(--control-border); }
-:where([data-theme="dark"]) .access-error { color: #f0beb0; }
 :where([data-theme="dark"]) pre { color: #c3d0e7; background: #141e2d; }
 @media (min-width: 1450px) { .graph-layout { grid-template-columns: minmax(0, 1fr) 315px; } }
 @media (max-width: 960px) {
@@ -398,7 +387,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
   .chart-panel { padding: 13px; }
   .reward-summary, .reward-axis { grid-template-columns: 57px minmax(0, 1fr) 72px; gap: 7px; }
   .token-series { grid-template-columns: 48px minmax(0, 1fr) 72px; gap: 8px; }
-  .access-controls { flex-direction: column; }
 }
 @media (forced-colors: active) {
   .node-card, .root .node-card, .discarded .node-card { fill: Canvas; stroke: CanvasText; }
