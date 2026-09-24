@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bootstrapSession, fetchSnapshot, mapSnapshot, SessionRequiredError, unlockSession } from "./web/data.mjs";
+import { fetchSnapshot, mapSnapshot } from "./web/data.mjs";
 
 const snapshot = (response = {}) => ({
   source: "Saved local result", saved_at: "2026-09-21T20:00:00Z",
@@ -206,93 +206,3 @@ test("handles HTTP, transport and invalid JSON failures without displaying respo
   })), /invalid JSON/);
 });
 
-test("bootstrap strips the token fragment before exchanging it for the session cookie", async () => {
-  const events = [];
-  const location = { hash: "#token=secret%2Bvalue", pathname: "/", search: "?view=saved" };
-  const history = { replaceState: (...args) => events.push(["replace", ...args]) };
-  await bootstrapSession(location, history, async (url, options) => {
-    assert.deepEqual(events, [["replace", null, "", "/?view=saved"]]);
-    assert.equal(url, "/session");
-    assert.equal(options.method, "POST");
-    assert.equal(options.headers.Authorization, "Bearer secret+value");
-    assert.equal(options.credentials, "same-origin");
-    assert.equal(options.cache, "no-store");
-    events.push(["post"]);
-    return { status: 204 };
-  });
-  assert.equal(events.length, 2);
-});
-
-test("reloads without a token reuse the cookie without a session exchange", async () => {
-  for (const hash of ["", "#raw"]) {
-    await bootstrapSession({ hash }, {
-      replaceState: () => assert.fail("A non-token fragment should be preserved"),
-    }, async () => assert.fail("No token should mean no POST"));
-  }
-});
-
-test("empty token fragments are removed but do not send an empty bearer credential", async () => {
-  let removed = false;
-  await bootstrapSession({ hash: "#token=", pathname: "/", search: "" }, {
-    replaceState: () => { removed = true; },
-  }, async () => assert.fail("An empty token should not be exchanged"));
-  assert.equal(removed, true);
-});
-
-test("bootstrap failures give reopen guidance without exposing credentials or server content", async () => {
-  const token = "private-test-token";
-  for (const fetcher of [
-    async () => ({ status: 401 }),
-    async () => ({ status: 403 }),
-    async () => ({ status: 500 }),
-    async () => ({ status: 200 }),
-    async () => { throw new Error(token); },
-  ]) {
-    let removed = false;
-    await assert.rejects(bootstrapSession({ hash: `#token=${token}`, pathname: "/", search: "" }, {
-      replaceState: () => { removed = true; },
-    }, fetcher), (error) => {
-      assert.equal(removed, true);
-      assert.match(error.message, /reopen.*link from the CLI/i);
-      assert.ok(!error.message.includes(token));
-      return true;
-    });
-  }
-});
-
-test("API authentication failures tell users to reopen the CLI link", async () => {
-  for (const status of [401, 403]) {
-    await assert.rejects(fetchSnapshot(async () => ({ ok: false, status })),
-      (error) => {
-        assert.ok(error instanceof SessionRequiredError);
-        assert.match(error.message, /Reopen the monitor link from the CLI/);
-        return true;
-      });
-  }
-});
-
-test("manual access-code exchange uses only the authorization header", async () => {
-  await unlockSession("manual-test-code", async (url, options) => {
-    assert.equal(url, "/session");
-    assert.equal(options.method, "POST");
-    assert.deepEqual(options.headers, { Authorization: "Bearer manual-test-code" });
-    assert.equal(options.body, undefined);
-    assert.equal(options.credentials, "same-origin");
-    return { status: 204 };
-  });
-});
-
-test("empty manual codes never cause a request", async () => {
-  for (const token of ["", "  ", null, undefined]) {
-    await assert.rejects(unlockSession(token, async () => assert.fail("Do not submit an empty code")),
-      /Enter the local access code/);
-  }
-});
-
-test("rejected manual codes produce a distinct locked state without echoing the code", async () => {
-  await assert.rejects(unlockSession("never-display-this-code", async () => ({ status: 401 })), (error) => {
-    assert.ok(error instanceof SessionRequiredError);
-    assert.ok(!error.message.includes("never-display-this-code"));
-    return true;
-  });
-});

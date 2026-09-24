@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 import {
-  bootstrapSession, buildGraph, chartScales, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
-  sequenceData, sequenceLabel, sequencePage, SessionRequiredError, TOKEN_PAGE_SIZE, unlockSession,
+  buildGraph, chartScales, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
+  sequenceData, sequenceLabel, sequencePage, TOKEN_PAGE_SIZE,
 } from "./data.mjs";
 
 const byID = (id) => document.getElementById(id);
@@ -708,9 +708,6 @@ export function setSnapshot(snapshot) {
   renderSequence();
   selectTab("graph");
   byID("load-error").hidden = true;
-  byID("access-panel").hidden = true;
-  byID("access-error").textContent = "";
-  byID("access-code").value = "";
   byID("snapshot").hidden = false;
   byID("load-status").textContent = "Saved snapshot loaded.";
   byID("load-status").className = "sr-only";
@@ -747,62 +744,23 @@ byID("token-jump-form").addEventListener("submit", (event) => {
   if (byID("token-position").reportValidity()) jumpToPosition(byID("token-position").valueAsNumber);
 });
 
-function showLocked(message = "") {
-  byID("snapshot").hidden = true;
-  byID("load-error").hidden = true;
-  byID("access-panel").hidden = false;
-  byID("access-error").textContent = message;
-  byID("load-status").className = "sr-only";
-  byID("load-status").textContent = "Snapshot locked. Enter the local access code to continue.";
-  byID("access-code").focus();
-}
-
 async function load() {
   byID("retry").disabled = true;
   byID("load-error").hidden = true;
-  byID("access-panel").hidden = true;
   byID("load-status").className = "notice";
   byID("load-status").textContent = "Loading saved snapshot…";
   try {
-    await bootstrapSession(window.location, window.history);
     setSnapshot(await fetchSnapshot());
   } catch (error) {
-    if (error instanceof SessionRequiredError) {
-      showLocked();
-    } else {
-      byID("snapshot").hidden = true;
-      byID("load-status").className = "sr-only";
-      byID("load-status").textContent = "";
-      byID("load-error").hidden = false;
-      byID("error-message").textContent = error.message;
-    }
+    byID("snapshot").hidden = true;
+    byID("load-status").className = "sr-only";
+    byID("load-status").textContent = "";
+    byID("load-error").hidden = false;
+    byID("error-message").textContent = error.message;
   } finally {
     byID("retry").disabled = false;
   }
 }
-
-byID("access-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const code = byID("access-code").value.trim();
-  byID("access-code").value = "";
-  byID("unlock").disabled = true;
-  byID("access-code").disabled = true;
-  byID("access-error").textContent = "";
-  byID("load-status").textContent = "Unlocking snapshot…";
-  try {
-    await unlockSession(code);
-    await load();
-    if (!byID("snapshot").hidden) byID("main").focus();
-  } catch (error) {
-    showLocked(error instanceof SessionRequiredError
-      ? "The access code was not accepted. Check the code in the monitor terminal and try again."
-      : error.message);
-  } finally {
-    byID("unlock").disabled = false;
-    byID("access-code").disabled = false;
-    if (!byID("access-panel").hidden) byID("access-code").focus();
-  }
-});
 
 byID("retry").addEventListener("click", load);
 byID("final-response-toggle").addEventListener("click", () => {

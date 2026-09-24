@@ -537,9 +537,8 @@ monitor without deleting saved artifacts.
 | Option | When to use it |
 | --- | --- |
 | `--output-dir <path>` | Read from an artifact root other than `.output` in the current folder. Pass the parent of the rollout-ID directories, not an individual rollout folder. |
-| `--no-browser` | On standalone `monitor`, print a link instead of opening the browser. Open the link and enter the local access code printed in the terminal. |
+| `--no-browser` | On standalone `monitor`, print a link instead of opening the browser. Open the printed link yourself. |
 
-The automatically opened browser handles the local access code for you.
 `--no-prompt` does not disable browser launching or stop the monitor.
 `--output` is not supported on standalone `monitor`.
 
@@ -554,6 +553,9 @@ Execution completion does not imply task success.
 
 **Treat saved artifacts as sensitive:** they may contain customer content.
 Keep `.output` out of source control and delete artifacts when no longer needed.
+The dashboard's local HTTP server binds to loopback (`127.0.0.1`) only and is not
+reachable from other machines, but it does not require a credential — any other
+process or user on the same machine can query it while `monitor` is running.
 
 ## Submit an RLE-backed fine-tuning job (experimental)
 

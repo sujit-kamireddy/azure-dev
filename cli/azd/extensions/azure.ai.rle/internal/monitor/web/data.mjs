@@ -156,13 +156,6 @@ export function mapSnapshot(snapshot) {
     outcome: response.success === true ? "Task succeeded" : response.success === false ? "Task unsuccessful" : null };
 }
 
-export class SessionRequiredError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "SessionRequiredError";
-  }
-}
-
 export const GRAPH_PAGE_SIZE = 80;
 export const TOKEN_PAGE_SIZE = 100;
 export const SEQUENCE_BIN_LIMIT = 160;
@@ -363,41 +356,6 @@ export function sequencePage(data, page = 0, size = TOKEN_PAGE_SIZE, filter = "a
   return { rows, page: currentPage, pageCount, start, end, total };
 }
 
-export async function bootstrapSession(location, history, fetcher = fetch) {
-  const parameters = new URLSearchParams(location.hash.slice(1));
-  const token = parameters.get("token");
-  if (parameters.has("token")) {
-    history.replaceState(null, "", location.pathname + location.search);
-  }
-  if (!token) return;
-  await unlockSession(token, fetcher);
-}
-
-export async function unlockSession(token, fetcher = fetch) {
-  if (typeof token !== "string" || !token.trim()) {
-    throw new Error("Enter the local access code printed by the monitor command.");
-  }
-  let result;
-  try {
-    result = await fetcher("/session", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      credentials: "same-origin",
-      cache: "no-store",
-    });
-  } catch {
-    throw new Error("Could not establish the local monitor session. Check that the monitor is running and reopen its link from the CLI.");
-  }
-  if (result.status === 401 || result.status === 403) {
-    throw new SessionRequiredError(
-      `Session authentication failed (HTTP ${result.status}). Reopen the monitor link from the CLI to start a new session.`,
-    );
-  }
-  if (result.status !== 204) {
-    throw new Error(`Session authentication failed (HTTP ${result.status}). Reopen the monitor link from the CLI to start a new session.`);
-  }
-}
-
 export async function fetchSnapshot(fetcher = fetch) {
   let result;
   try {
@@ -405,11 +363,6 @@ export async function fetchSnapshot(fetcher = fetch) {
       headers: { Accept: "application/json" } });
   } catch {
     throw new Error("Could not reach the local monitor. Check that the monitor command is still running, then try again.");
-  }
-  if (result.status === 401 || result.status === 403) {
-    throw new SessionRequiredError(
-      `Session authentication failed (HTTP ${result.status}). Reopen the monitor link from the CLI to access this snapshot.`,
-    );
   }
   if (!result.ok) {
     throw new Error(`The local monitor returned HTTP ${result.status}. Check the monitor terminal, then try again.`);
