@@ -18,6 +18,12 @@
   manifest can supply both. They are still required settings, and a run that
   resolves neither reports which one is missing and where it can be set.
 
+- `rle.toml` may pin `imageTag` in `[rle]`. A Harness environment can be
+  republished against the same, unchanged image, so the image tag and the
+  environment version move apart, and build scripts pin the tag. The manifest is
+  parsed in strict mode, so an environment that recorded one previously failed
+  every command with a schema error.
+
 - `azd ai rle train` gained `--task-count`, which trains on only the first N
   tasks of the dataset. Checking an environment end to end previously meant
   editing the dataset itself.

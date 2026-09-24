@@ -353,6 +353,33 @@ subtype = "OpenEnv"
 	}
 }
 
+func TestLoadRleConfigAcceptsAPinnedImageTag(t *testing.T) {
+	dir := t.TempDir()
+	content := `[rle]
+name = "competitive_intelligence_agent"
+version = "1.0.16"
+imageTag = "1.0.3"
+type = "Harness"
+subtype = "HostedAgent"
+agentName = "ci-agent"
+agentVersion = "15"
+`
+	if err := os.WriteFile(filepath.Join(dir, RleConfigFile), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := LoadRleConfig(dir)
+	if err != nil {
+		t.Fatalf("a manifest that pins an image tag should load, got %v", err)
+	}
+	if config.Rle.ImageTag == nil || *config.Rle.ImageTag != "1.0.3" {
+		t.Fatalf("imageTag = %v, want 1.0.3", config.Rle.ImageTag)
+	}
+	if config.Rle.Version != "1.0.16" {
+		t.Fatalf("version = %q, want 1.0.16: the image tag must not overwrite it", config.Rle.Version)
+	}
+}
+
 func TestNormalizeRleConfigEnforcesControlPlaneTypeContract(t *testing.T) {
 	tests := []struct {
 		name     string

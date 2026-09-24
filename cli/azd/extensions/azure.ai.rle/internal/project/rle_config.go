@@ -55,13 +55,22 @@ type RleConfig struct {
 
 // RleManifest uses the control-plane field names so the [rle] table maps directly to an RLE release.
 type RleManifest struct {
-	Name         string     `toml:"name"`
-	Version      string     `toml:"version"`
-	Type         RleType    `toml:"type"`
-	Subtype      RleSubtype `toml:"subtype"`
-	AgentName    *string    `toml:"agentName,omitempty"`
-	AgentVersion *string    `toml:"agentVersion,omitempty"`
-	BaseURL      *string    `toml:"baseUrl,omitempty"`
+	Name    string     `toml:"name"`
+	Version string     `toml:"version"`
+	Type    RleType    `toml:"type"`
+	Subtype RleSubtype `toml:"subtype"`
+
+	// ImageTag pins the harness container independently of Version. A Harness
+	// environment can be republished against the same, unchanged image, so the
+	// two move apart. The CLI does not build or push images -- publish takes the
+	// image path as an argument -- but the field has to be declared, because the
+	// manifest is parsed in strict mode and an environment whose build scripts
+	// pin a tag would otherwise fail every command with a schema error.
+	ImageTag *string `toml:"imageTag,omitempty"`
+
+	AgentName    *string `toml:"agentName,omitempty"`
+	AgentVersion *string `toml:"agentVersion,omitempty"`
+	BaseURL      *string `toml:"baseUrl,omitempty"`
 }
 
 // RleEnvironmentDefaults contains reusable version-scoped training defaults.
