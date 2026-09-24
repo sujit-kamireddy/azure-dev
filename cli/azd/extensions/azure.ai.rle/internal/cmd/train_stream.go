@@ -195,6 +195,10 @@ func trainStreamURL(endpoint string, jobID string, resume string) (string, error
 
 // followTrainingRun mirrors a running job's artifacts into logsRoot until the job
 // ends, reporting progress on out. It returns the job's terminal status.
+// followTrainingRunFunc is the stream the train command follows, replaced in
+// tests that exercise what happens around it rather than the transport itself.
+var followTrainingRunFunc = followTrainingRun
+
 func followTrainingRun(
 	ctx context.Context,
 	endpoint string,

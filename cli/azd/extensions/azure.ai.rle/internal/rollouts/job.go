@@ -31,6 +31,10 @@ type Entry struct {
 //
 // A Reader alone cannot open a training job, because the rollout IDs a run
 // generates are not known to the caller beforehand.
+//
+// List returns the rollouts recorded after the given rollout ID, or the whole
+// run when it is empty. A running job keeps appending rollouts, so the
+// dashboard re-lists from where it stopped rather than re-reading the run.
 type Lister interface {
-	List(ctx context.Context) ([]Entry, error)
+	List(ctx context.Context, after string) ([]Entry, error)
 }

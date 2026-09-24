@@ -615,6 +615,28 @@ already on disk. If the stream drops, `train` reports it but still exits zero --
 the job was accepted and is running on the service, and a non-zero exit would
 say otherwise.
 
+`--follow` also serves the rollout dashboard for the run it submitted, and
+prints its address:
+
+```text
+Rollout monitor for job ftjob-1234 (0 rollouts so far): http://127.0.0.1:41233/
+```
+
+It opens empty, because the first rollout of a run takes minutes. The page polls
+as the run records them, so rollouts appear without reloading, and any of them
+can be opened while the run continues. The dashboard stays up after the run
+finishes -- that is when its rollouts are finally all there to read -- so stop it
+with Ctrl+C. `--no-browser` prints the address without opening a browser.
+
+Without `--follow` the command exits as soon as the job is accepted, so there is
+nothing left to serve a dashboard from. It names the command that opens one
+instead:
+
+```text
+Watch this run's rollouts as they land:
+  azd ai rle monitor --job-id ftjob-1234
+```
+
 ## List RLE-backed fine-tuning jobs (experimental)
 
 `azd ai rle jobs` lists fine-tuning jobs that use the `rl_environment` method.

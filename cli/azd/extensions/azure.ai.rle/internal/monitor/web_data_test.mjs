@@ -237,3 +237,18 @@ test("index transport and HTTP failures stay distinguishable", async () => {
   await assert.rejects(fetchRolloutIndex(async () => ({ ok: false, status: 500 })), /HTTP 500/);
   await assert.rejects(fetchRolloutIndex(async () => { throw new Error("sensitive"); }), /Could not reach/);
 });
+
+test("polls from the last rollout it holds, so a poll costs only what is new", async () => {
+  const received = await fetchRolloutIndex(async (url) => {
+    assert.equal(url, "/api/rollouts?after=rollout-9");
+    return { ok: true, json: async () => ({ job_id: "ftjob-1", data: [] }) };
+  }, "rollout-9");
+  assert.deepEqual(received.data, []);
+});
+
+test("a rollout id is escaped into the poll query rather than concatenated", async () => {
+  await fetchRolloutIndex(async (url) => {
+    assert.equal(url, "/api/rollouts?after=a%26b%3Dc");
+    return { ok: true, json: async () => ({ job_id: "ftjob-1", data: [] }) };
+  }, "a&b=c");
+});

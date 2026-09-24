@@ -44,7 +44,8 @@ opening a browser. Incomplete or corrupt artifacts still return an error.
 With --job-id, list the rollouts a training job recorded and open any one of
 them in the same dashboard. This reads the fine-tuning service, so it requires
 sign-in and an endpoint; --output-dir is not used. Rollout bodies are fetched
-only as they are opened.
+only as they are opened. A run still in progress keeps recording, so the list
+keeps up with it: the page polls for what has landed since it last asked.
 
 The monitor stays running until Ctrl+C. Use --no-browser to open the printed
 link manually and enter the local access code.`,
@@ -122,10 +123,10 @@ func (j *jobRollouts) Get(ctx context.Context, rolloutID string) (rollouts.Snaps
 }
 
 // List follows the service's paging so the dashboard sees the whole run, not its first page.
-func (j *jobRollouts) List(ctx context.Context) ([]rollouts.Entry, error) {
+// It starts after the given rollout, so a poll costs only the rollouts that are new.
+func (j *jobRollouts) List(ctx context.Context, after string) ([]rollouts.Entry, error) {
 	const pageSize = 500
 	var all []rollouts.Entry
-	after := ""
 	for {
 		page, err := j.client.listJobRollouts(ctx, j.jobID, "", after, pageSize)
 		if err != nil {
