@@ -587,12 +587,71 @@ azd ai rle train `
 `FOUNDRY_PROJECT_ENDPOINT` identifies the project that owns the named RLE. The
 fine-tuning endpoint is derived from the same account as
 `https://<account>.openai.azure.com`.
-`--training-file` is required and must point to a regular local training dataset
+A training file is required and must point to a regular local training dataset
 file. The extension uploads it to the selected fine-tuning resource with the
 `fine-tune` purpose, then uses the returned file ID when it submits the job.
-`--validation-file` is optional and follows the same local-file upload flow.
+The validation file is optional and follows the same local-file upload flow.
 Use `--endpoint` to target a different fine-tuning resource for a single
 invocation.
+
+### Training settings in `rle.toml`
+
+Everything above can be recorded in the environment's own `rle.toml`, so a run
+is one command instead of a line of flags nobody remembers:
+
+```toml
+[rle]
+name = "code_rl"
+version = "1.0.0"
+type = "Gym"
+subtype = "OpenEnv"
+
+[train]
+model = "Qwen/Qwen3-32B"
+training_file = "../job_data/train.jsonl"
+validation_file = "../job_data/validation.jsonl"
+
+[train.options]
+learning_rate = 4e-05
+max_steps = 30
+group_size = 4
+```
+
+```powershell
+cd rle
+azd ai rle train
+```
+
+Any flag overrides the manifest for a single run, so a saved configuration stays
+usable without being edited.
+
+`[train]` is deliberately separate from `[defaults]`. `[defaults]` describes the
+published environment version -- `publish` sends it to the service and refuses a
+local copy that has drifted -- and published versions are immutable, so a value
+that changes from run to run cannot live there. `[train]` is local and is never
+published.
+
+Option names under `[train.options]` are validated by the service, which rejects
+an unknown one rather than dropping it: a typo that was quietly ignored would
+produce a job that trained on defaults while its record claimed otherwise. The
+error lists every accepted name.
+
+`--model` and `--training-file` are not required flags, because the manifest can
+supply both. They are still required settings, and a run that resolves neither
+reports which one is missing and where it can be set.
+
+### Smaller runs
+
+`--task-count` trains on only the first N tasks of the dataset, which is the
+quickest way to check an environment end to end without editing the dataset or
+the manifest:
+
+```powershell
+azd ai rle train --task-count 8
+```
+
+It sets the `max_train_examples` training option, and takes precedence over the
+same option in `[train.options]`.
 
 ## List RLE-backed fine-tuning jobs (experimental)
 
