@@ -190,8 +190,8 @@ func stubFinetuneClientEndpoint(t *testing.T, endpoint string) {
 	t.Helper()
 	originalCreateFinetuneClient := createFinetuneClient
 	createFinetuneClient = func(actualEndpoint string) (*finetuneClient, error) {
-		if actualEndpoint != "https://account.openai.azure.com" {
-			t.Fatalf("expected derived fine-tuning endpoint, got %q", actualEndpoint)
+		if actualEndpoint != rleTrainingServiceEndpoint {
+			t.Fatalf("expected the RLE training service, got %q", actualEndpoint)
 		}
 		return testFinetuneClientForServer(t, endpoint), nil
 	}

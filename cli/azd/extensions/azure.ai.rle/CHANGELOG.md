@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `azd ai rle train`, `jobs` and `monitor --job-id` now default to the RLE
+  training service instead of deriving a fine-tuning endpoint from the Foundry
+  account. RLE jobs are not served by an account's own fine-tuning API yet, so
+  the derived endpoint could not accept them and `--endpoint` had to be passed
+  every time. `$RLE_TRAIN_ENDPOINT` names a different deployment, and
+  `--endpoint` still wins over both.
+
+  The hardcoded address is deliberately temporary: when an account's endpoint
+  serves RLE jobs, removing it restores the derivation, which is still tested.
+
 - `azd ai rle train` gained `--follow`, which mirrors a run's artifacts to the
   local disk while the job runs, into the layout the Loom cookbook's dashboard
   already discovers. An in-flight Foundry run can be opened in that dashboard
