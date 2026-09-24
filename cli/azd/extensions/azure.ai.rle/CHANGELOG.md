@@ -37,6 +37,31 @@
   stopped at whatever had landed when it started. The page polls, and asks only
   for what was recorded after the rollouts it already holds, so the cost of a
   poll does not grow with the length of the run.
+- `azd ai rle train` now reads its settings from the environment's own
+  `rle.toml`. A new `[train]` section records the model, the training and
+  validation dataset paths, the suffix and the max episode steps, and
+  `[train.options]` records the training options, so a run is `azd ai rle train`
+  from the environment folder rather than a line of flags nobody remembers. Any
+  flag still overrides the manifest for a single run.
+
+  `[train]` is separate from `[defaults]` on purpose: `publish` sends
+  `[defaults]` to the service and refuses a local copy that has drifted, and
+  published versions are immutable, so a value that changes from run to run
+  cannot live there.
+
+  `--model` and `--training-file` are no longer required flags, because the
+  manifest can supply both. They are still required settings, and a run that
+  resolves neither reports which one is missing and where it can be set.
+
+- `rle.toml` may pin `imageTag` in `[rle]`. A Harness environment can be
+  republished against the same, unchanged image, so the image tag and the
+  environment version move apart, and build scripts pin the tag. The manifest is
+  parsed in strict mode, so an environment that recorded one previously failed
+  every command with a schema error.
+
+- `azd ai rle train` gained `--task-count`, which trains on only the first N
+  tasks of the dataset. Checking an environment end to end previously meant
+  editing the dataset itself.
 
 ## 0.8.15-preview
 

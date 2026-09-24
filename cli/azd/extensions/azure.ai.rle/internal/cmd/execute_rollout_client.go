@@ -51,9 +51,9 @@ type rolloutPolicy struct {
 }
 
 // rolloutSamplingOptions carries how completions are rendered, which is a Capture Proxy
-// concern common to every policy type rather than a property of one. The CLI names no
-// renderer today, so this is omitted entirely and the service selects a compatible default;
-// sending an empty renderer_name instead would be rejected.
+// concern common to every policy type rather than a property of one. It is omitted entirely
+// unless --renderer names one, because the service selects a compatible default but rejects
+// an empty renderer_name.
 type rolloutSamplingOptions struct {
 	RendererName string `json:"renderer_name,omitempty"`
 }

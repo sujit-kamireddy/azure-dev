@@ -28,7 +28,7 @@ func TestBuildFinetuneJobRequestUsesRleEnvironmentMethod(t *testing.T) {
 		model:      "Qwen/Qwen3-32B",
 	}
 
-	request := buildFinetuneJobRequest(flags, "file-training", "")
+	request := buildFinetuneJobRequest(flags, "file-training", "", nil)
 
 	if request.Model != "Qwen/Qwen3-32B" {
 		t.Fatalf("expected model to map from flags, got %q", request.Model)
@@ -73,7 +73,7 @@ func TestBuildFinetuneJobRequestIncludesOptionalFields(t *testing.T) {
 		maxEpisodeSteps: 32,
 	}
 
-	request := buildFinetuneJobRequest(flags, "file-abc", "file-def")
+	request := buildFinetuneJobRequest(flags, "file-abc", "file-def", nil)
 
 	if request.TrainingFile != "file-abc" {
 		t.Fatalf("expected training_file to be set, got %q", request.TrainingFile)
@@ -90,16 +90,26 @@ func TestBuildFinetuneJobRequestIncludesOptionalFields(t *testing.T) {
 }
 
 func TestTrainCommandRequiresTrainingFile(t *testing.T) {
+	// rle.toml can supply the training file, so this is no longer a required flag.
+	// It is still a required setting, and the error has to name it.
+	t.Chdir(t.TempDir())
 	cmd := newTrainCommand()
 	cmd.SetArgs([]string{
 		"--rle-name", "code_rl",
 		"--rle-version", "1.0.0",
 		"--model", "Qwen/Qwen3-32B",
 	})
+	cmd.SilenceUsage = true
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
 
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), `required flag(s) "training-file" not set`) {
-		t.Fatalf("expected missing training-file error, got %v", err)
+	var localErr *azdext.LocalError
+	if !errors.As(err, &localErr) || localErr.Code != "rle_train_setting_required" {
+		t.Fatalf("expected a missing training file error, got %v", err)
+	}
+	if !strings.Contains(localErr.Message, "training file") {
+		t.Fatalf("the error should name the training file: %q", localErr.Message)
 	}
 }
 
@@ -357,8 +367,8 @@ func TestTrainFallsBackToRleConfigNameAndVersion(t *testing.T) {
 	t.Chdir(dir)
 	writeTrainRleConfig(t, dir, "code_rl", "1.2.3")
 
-	action := &trainAction{flags: &rleTrainFlags{}}
-	if err := action.resolveTrainTarget(); err != nil {
+	action := &trainAction{flags: &rleTrainFlags{model: "m", trainingFile: "t"}}
+	if _, err := action.resolveTrainSettings(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -375,8 +385,8 @@ func TestTrainFlagsOverrideRleConfig(t *testing.T) {
 	t.Chdir(dir)
 	writeTrainRleConfig(t, dir, "code_rl", "1.2.3")
 
-	action := &trainAction{flags: &rleTrainFlags{rleName: "math_rl", rleVersion: "2.0.0"}}
-	if err := action.resolveTrainTarget(); err != nil {
+	action := &trainAction{flags: &rleTrainFlags{rleName: "math_rl", rleVersion: "2.0.0", model: "m", trainingFile: "t"}}
+	if _, err := action.resolveTrainSettings(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -390,8 +400,8 @@ func TestTrainFallsBackToRleConfigVersionOnly(t *testing.T) {
 	t.Chdir(dir)
 	writeTrainRleConfig(t, dir, "code_rl", "1.2.3")
 
-	action := &trainAction{flags: &rleTrainFlags{rleName: "math_rl"}}
-	if err := action.resolveTrainTarget(); err != nil {
+	action := &trainAction{flags: &rleTrainFlags{rleName: "math_rl", model: "m", trainingFile: "t"}}
+	if _, err := action.resolveTrainSettings(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -404,7 +414,7 @@ func TestTrainWithoutRleConfigOrFlagsFails(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	action := &trainAction{flags: &rleTrainFlags{}}
-	err := action.resolveTrainTarget()
+	_, err := action.resolveTrainSettings()
 	if err == nil {
 		t.Fatal("expected an error when neither --rle-name nor rle.toml supplies the environment")
 	}
@@ -574,5 +584,236 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "dashboard is still running") {
 		t.Fatalf("output = %q, want the dashboard to outlive the run", output.String())
+	}
+}
+
+func TestTrainingOptionsReachTheRleEnvironmentBlock(t *testing.T) {
+	flags := &rleTrainFlags{rleName: "math_rl", rleVersion: "1.0.6", model: "qwen3-32b-1"}
+	options := map[string]any{"learning_rate": 2e-5, "max_steps": float64(50)}
+
+	request := buildFinetuneJobRequest(flags, "file-training", "", options)
+
+	if request.Method.RleEnvironment.Hyperparameters["max_steps"] != float64(50) {
+		t.Fatalf("expected max_steps to reach the request, got %#v",
+			request.Method.RleEnvironment.Hyperparameters)
+	}
+
+	// The service reads options from method.rl_environment.hyperparameters, so a
+	// rename in the payload would silently stop applying them.
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var wire struct {
+		Method struct {
+			RleEnvironment struct {
+				Hyperparameters map[string]any `json:"hyperparameters"`
+			} `json:"rl_environment"`
+		} `json:"method"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if wire.Method.RleEnvironment.Hyperparameters["learning_rate"] != 2e-5 {
+		t.Fatalf("options did not survive the wire shape: %s", encoded)
+	}
+}
+
+func TestNoTrainingOptionsLeavesTheRequestUnchanged(t *testing.T) {
+	flags := &rleTrainFlags{rleName: "math_rl", rleVersion: "1.0.6", model: "qwen3-32b-1"}
+
+	request := buildFinetuneJobRequest(flags, "file-training", "", nil)
+
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "hyperparameters") {
+		t.Fatalf("absent options must not add the field: %s", encoded)
+	}
+}
+
+// writeTrainRleConfigWithTrain writes a manifest carrying a [train] section.
+func writeTrainRleConfigWithTrain(t *testing.T, dir string, train *project.RleTrainSettings) {
+	t.Helper()
+	schemaVersion := project.CurrentRleManifestSchemaVersion
+	if err := project.WriteRleConfig(dir, project.RleConfig{
+		SchemaVersion: &schemaVersion,
+		Rle: project.RleManifest{
+			Name:    "code_rl",
+			Version: "1.2.3",
+			Type:    project.RleTypeGym,
+			Subtype: project.RleSubtypeOpenEnv,
+		},
+		Train: train,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func strPtr(value string) *string { return &value }
+
+func TestTrainReadsSettingsFromRleConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	steps := 7
+	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
+		Model:           strPtr("qwen3-32b-1"),
+		TrainingFile:    strPtr("job_data/train.jsonl"),
+		ValidationFile:  strPtr("job_data/validation.jsonl"),
+		Suffix:          strPtr("nightly"),
+		MaxEpisodeSteps: &steps,
+		Options:         map[string]any{"group_size": int64(4)},
+	})
+
+	action := &trainAction{flags: &rleTrainFlags{}}
+	options, err := action.resolveTrainSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if action.flags.model != "qwen3-32b-1" {
+		t.Fatalf("model: %q", action.flags.model)
+	}
+	if action.flags.trainingFile != "job_data/train.jsonl" {
+		t.Fatalf("training file: %q", action.flags.trainingFile)
+	}
+	if action.flags.validationFile != "job_data/validation.jsonl" {
+		t.Fatalf("validation file: %q", action.flags.validationFile)
+	}
+	if action.flags.suffix != "nightly" {
+		t.Fatalf("suffix: %q", action.flags.suffix)
+	}
+	if action.flags.maxEpisodeSteps != 7 {
+		t.Fatalf("max episode steps: %d", action.flags.maxEpisodeSteps)
+	}
+	if options["group_size"] != int64(4) {
+		t.Fatalf("options: %#v", options)
+	}
+}
+
+func TestTrainFlagsOverrideRleConfigTrainSection(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
+		Model:        strPtr("from-manifest"),
+		TrainingFile: strPtr("manifest.jsonl"),
+		Suffix:       strPtr("manifest"),
+	})
+
+	action := &trainAction{flags: &rleTrainFlags{
+		model:        "from-flag",
+		trainingFile: "flag.jsonl",
+		suffix:       "flag",
+	}}
+	if _, err := action.resolveTrainSettings(); err != nil {
+		t.Fatal(err)
+	}
+
+	if action.flags.model != "from-flag" || action.flags.trainingFile != "flag.jsonl" {
+		t.Fatalf("flags must win: %q %q", action.flags.model, action.flags.trainingFile)
+	}
+	if action.flags.suffix != "flag" {
+		t.Fatalf("suffix: %q", action.flags.suffix)
+	}
+}
+
+func TestTaskCountSetsTheDatasetLimitOption(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
+		Model:        strPtr("qwen3-32b-1"),
+		TrainingFile: strPtr("train.jsonl"),
+	})
+
+	action := &trainAction{flags: &rleTrainFlags{taskCount: 12}}
+	options, err := action.resolveTrainSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options[trainTaskCountOption] != 12 {
+		t.Fatalf("expected --task-count to set %s, got %#v", trainTaskCountOption, options)
+	}
+}
+
+func TestTaskCountOverridesTheManifestLimit(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
+		Model:        strPtr("qwen3-32b-1"),
+		TrainingFile: strPtr("train.jsonl"),
+		Options:      map[string]any{trainTaskCountOption: int64(500)},
+	})
+
+	action := &trainAction{flags: &rleTrainFlags{taskCount: 12}}
+	options, err := action.resolveTrainSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One option cannot be sent twice, so the flag has to replace the manifest's
+	// value rather than being appended alongside it.
+	if options[trainTaskCountOption] != 12 {
+		t.Fatalf("expected the flag to win, got %#v", options[trainTaskCountOption])
+	}
+}
+
+func TestTaskCountIsOmittedWhenUnset(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
+		Model:        strPtr("qwen3-32b-1"),
+		TrainingFile: strPtr("train.jsonl"),
+	})
+
+	action := &trainAction{flags: &rleTrainFlags{}}
+	options, err := action.resolveTrainSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := options[trainTaskCountOption]; present {
+		t.Fatalf("an unset --task-count must not limit the dataset: %#v", options)
+	}
+}
+
+func TestTrainReportsWhatIsMissingWithoutFlagsOrManifestSettings(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTrainRleConfig(t, dir, "code_rl", "1.2.3")
+
+	action := &trainAction{flags: &rleTrainFlags{}}
+	_, err := action.resolveTrainSettings()
+	if err == nil {
+		t.Fatal("expected a missing model to be reported")
+	}
+	var localErr *azdext.LocalError
+	if !errors.As(err, &localErr) || localErr.Code != "rle_train_setting_required" {
+		t.Fatalf("expected a user-facing error, got %#v", err)
+	}
+	if !strings.Contains(localErr.Suggestion, "rle.toml") {
+		t.Fatalf("the suggestion should point at rle.toml: %q", localErr.Suggestion)
+	}
+}
+
+// A [train] section must not be mistaken for the published defaults: publish sends
+// Defaults to the service and rejects a local copy that has drifted, so a per-run
+// value landing there would make every tweak look like a mismatch.
+func TestTrainSectionIsSeparateFromPublishedDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
+		Model:        strPtr("qwen3-32b-1"),
+		TrainingFile: strPtr("train.jsonl"),
+		Options:      map[string]any{"group_size": int64(4)},
+	})
+
+	config, err := project.LoadRleConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Defaults != nil {
+		t.Fatalf("[train] must not populate the published defaults: %#v", config.Defaults)
+	}
+	if config.Train == nil || config.Train.Model == nil {
+		t.Fatal("expected the train section to round-trip through rle.toml")
 	}
 }

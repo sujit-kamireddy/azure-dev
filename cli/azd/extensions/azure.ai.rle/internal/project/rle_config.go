@@ -50,17 +50,27 @@ type RleConfig struct {
 	SchemaVersion *string                 `toml:"schema_version,omitempty"`
 	Rle           RleManifest             `toml:"rle"`
 	Defaults      *RleEnvironmentDefaults `toml:"defaults,omitempty"`
+	Train         *RleTrainSettings       `toml:"train,omitempty"`
 }
 
 // RleManifest uses the control-plane field names so the [rle] table maps directly to an RLE release.
 type RleManifest struct {
-	Name         string     `toml:"name"`
-	Version      string     `toml:"version"`
-	Type         RleType    `toml:"type"`
-	Subtype      RleSubtype `toml:"subtype"`
-	AgentName    *string    `toml:"agentName,omitempty"`
-	AgentVersion *string    `toml:"agentVersion,omitempty"`
-	BaseURL      *string    `toml:"baseUrl,omitempty"`
+	Name    string     `toml:"name"`
+	Version string     `toml:"version"`
+	Type    RleType    `toml:"type"`
+	Subtype RleSubtype `toml:"subtype"`
+
+	// ImageTag pins the harness container independently of Version. A Harness
+	// environment can be republished against the same, unchanged image, so the
+	// two move apart. The CLI does not build or push images -- publish takes the
+	// image path as an argument -- but the field has to be declared, because the
+	// manifest is parsed in strict mode and an environment whose build scripts
+	// pin a tag would otherwise fail every command with a schema error.
+	ImageTag *string `toml:"imageTag,omitempty"`
+
+	AgentName    *string `toml:"agentName,omitempty"`
+	AgentVersion *string `toml:"agentVersion,omitempty"`
+	BaseURL      *string `toml:"baseUrl,omitempty"`
 }
 
 // RleEnvironmentDefaults contains reusable version-scoped training defaults.
@@ -69,6 +79,27 @@ type RleEnvironmentDefaults struct {
 	Reinforcement *RleReinforcementDefaults `toml:"reinforcement,omitempty" json:"reinforcement,omitempty"`
 	Grpo          *RleGrpoDefaults          `toml:"grpo,omitempty" json:"grpo,omitempty"`
 	GymOpenEnv    *RleGymOpenEnvDefaults    `toml:"gym_openenv,omitempty" json:"gym_openenv,omitempty"`
+}
+
+// RleTrainSettings records how this environment is usually trained, so that a run
+// is `azd ai rle train` rather than a line of flags nobody remembers.
+//
+// This is deliberately separate from Defaults. Defaults describes the published
+// environment version -- publish sends it to the service and rejects a local copy
+// that has drifted -- and versions are immutable, so a value that changes from run
+// to run cannot live there. These settings are local, are never published, and are
+// free to change without republishing.
+//
+// Options is left opaque. The service owns the option vocabulary and validates it
+// per recipe, naming the offending field and the supported set; duplicating that
+// list here would only add a second place to be out of date.
+type RleTrainSettings struct {
+	Model           *string        `toml:"model,omitempty" json:"model,omitempty"`
+	TrainingFile    *string        `toml:"training_file,omitempty" json:"training_file,omitempty"`
+	ValidationFile  *string        `toml:"validation_file,omitempty" json:"validation_file,omitempty"`
+	Suffix          *string        `toml:"suffix,omitempty" json:"suffix,omitempty"`
+	MaxEpisodeSteps *int           `toml:"max_episode_steps,omitempty" json:"max_episode_steps,omitempty"`
+	Options         map[string]any `toml:"options,omitempty" json:"options,omitempty"`
 }
 
 // RleModelDefaults contains the optional model and renderer selection.
