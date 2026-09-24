@@ -43,7 +43,7 @@ FOUNDRY_PROJECT_ENDPOINT and returns only jobs that use the rl_environment metho
 		&action.endpoint,
 		"endpoint",
 		"",
-		fmt.Sprintf("Fine-tuning API endpoint. Defaults to the account in %s.", foundryProjectEndpointEnvVar),
+		fmt.Sprintf("Fine-tuning API endpoint. Defaults to $%s, else the RLE training service.", rleTrainEndpointEnvVar),
 	)
 	azdext.RegisterFlagOptions(cmd, azdext.FlagOptions{
 		Name:          "output",

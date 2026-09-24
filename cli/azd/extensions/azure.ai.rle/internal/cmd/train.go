@@ -91,7 +91,7 @@ FOUNDRY_PROJECT_ENDPOINT.`,
 		"Train on only the first N tasks of the training dataset, for a smaller run. "+
 			"Sets the max_train_examples training option (0 uses the whole dataset).")
 	cmd.Flags().StringVar(&flags.endpoint, "endpoint", "",
-		fmt.Sprintf("Fine-tuning API endpoint. Defaults to the account in %s.", foundryProjectEndpointEnvVar))
+		fmt.Sprintf("Fine-tuning API endpoint. Defaults to $%s, else the RLE training service.", rleTrainEndpointEnvVar))
 
 	// model and training-file are not marked required: rle.toml can supply either,
 	// and cobra would reject the run before the manifest is ever read.
