@@ -34,6 +34,7 @@ type rolloutFlags struct {
 	agentInput     string
 	agentInputFile string
 	rolloutID      string
+	renderer       string
 	sequenceID     int
 	timeout        int
 	outputDir      string
@@ -123,6 +124,12 @@ rle.toml. To run an environment without local source, provide both its name and
 		"rollout-id",
 		"",
 		"Caller-generated rollout correlation id. Defaults to a generated GUID.",
+	)
+	cmd.Flags().StringVar(
+		&flags.renderer,
+		"renderer",
+		"",
+		"Capture Proxy renderer name. Defaults to a service-selected renderer when omitted.",
 	)
 	cmd.Flags().IntVar(&flags.sequenceID, "sequence-id", 0, "Loom training-step sequence id for this rollout.")
 	cmd.Flags().IntVar(&flags.timeout, "timeout", flags.timeout, "Loom session provisioning timeout in seconds.")
@@ -262,6 +269,10 @@ func (a *rolloutAction) executeAndSave(
 	}
 
 	sequenceID := int64(a.flags.sequenceID)
+	var sampling *rolloutSamplingOptions
+	if a.flags.renderer != "" {
+		sampling = &rolloutSamplingOptions{RendererName: a.flags.renderer}
+	}
 	if _, err := fmt.Fprintf(
 		out,
 		"Executing rollout %s for environment %s version %s ...\n",
@@ -284,6 +295,7 @@ func (a *rolloutAction) executeAndSave(
 			CheckpointID:    checkpointID,
 			SequenceID:      &sequenceID,
 		},
+		Sampling: sampling,
 	}, progress.Render, errOut)
 	if err != nil {
 		if isRleNotFound(err) {
