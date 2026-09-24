@@ -43,7 +43,7 @@ type rolloutAction struct {
 	cmd             *cobra.Command
 	flags           *rolloutFlags
 	environmentName string
-	// monitor opens the local dashboard after a development-mode rollout. It is cleared when
+	// monitor opens the local dashboard after the rollout. It is cleared when
 	// the dashboard cannot open safely, so the rollout warns instead of failing.
 	monitor bool
 }
@@ -134,19 +134,17 @@ rle.toml. To run an environment without local source, provide both its name and
 			"The Execute Rollout response carries the full capture graph — token ids, logprobs "+
 			"and loss masks — which is too large to print and is not retrievable afterwards.",
 	)
-	if rolloutMonitorEnabled() {
-		cmd.Long += `
+	cmd.Long += `
 
-In development mode, rollout opens a local dashboard from the rollout artifacts after
-execution resources are released; it stays running until Ctrl+C. The dashboard is skipped
+Rollout opens a local dashboard from the rollout artifacts after execution
+resources are released; it stays running until Ctrl+C. The dashboard is skipped
 when --output is set.
 Reopen a saved result with azd ai rle monitor --rollout-id <id> [--output-dir <directory>].`
-	}
 	return cmd
 }
 
 func (a *rolloutAction) Run() error {
-	a.monitor = rolloutMonitorEnabled()
+	a.monitor = true
 	// The monitor yields to machine-readable output rather than rejecting it.
 	if flag := a.cmd.Flag("output"); flag != nil && flag.Changed {
 		a.monitor = false

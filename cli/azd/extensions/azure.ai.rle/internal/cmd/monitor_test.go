@@ -33,7 +33,7 @@ func isolateRolloutArtifacts(t *testing.T) string {
 	return filepath.Join(root, defaultRolloutOutputDir)
 }
 
-// stubRolloutMonitor keeps development-mode rollouts, where the monitor is on by default,
+// stubRolloutMonitor keeps rollouts, where the monitor is on by default,
 // from opening a real browser and blocking until Ctrl+C.
 func stubRolloutMonitor(t *testing.T) {
 	t.Helper()
@@ -148,16 +148,12 @@ func TestRolloutMonitorLifecycle(t *testing.T) {
 		failSave    bool
 		failExecute bool
 		failCleanup bool
-		disabled    bool
 		wantMonitor bool
 		wantSkipped bool
 		jsonOutput  bool
 		wantError   string
 	}{
-		{name: "non-development rollout saves without monitor", disabled: true},
-		{name: "non-development save failure warns", disabled: true, failSave: true},
-		{name: "non-development cleanup failure warns", disabled: true, failCleanup: true},
-		{name: "monitor opens after cleanup in development mode", wantMonitor: true},
+		{name: "monitor opens after cleanup", wantMonitor: true},
 		{name: "execution failure", failExecute: true, wantError: "RLE service"},
 		{name: "save failure warns and skips monitor", failSave: true, wantSkipped: true},
 		{name: "cleanup failure warns and skips monitor", failCleanup: true, wantSkipped: true},
@@ -165,9 +161,6 @@ func TestRolloutMonitorLifecycle(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			outputDir := isolateRolloutArtifacts(t)
-			if tc.disabled {
-				t.Setenv(rleEnableAllEnvVar, "false")
-			}
 			if tc.failSave {
 				if err := os.WriteFile(outputDir, []byte("not a directory"), 0o600); err != nil {
 					t.Fatal(err)
@@ -372,38 +365,24 @@ func TestMonitorEndpointRedactsCredentials(t *testing.T) {
 	}
 }
 
-func TestMonitorDevelopmentGate(t *testing.T) {
-	for _, tc := range []struct {
-		development string
-		enabled     bool
-	}{
-		{"", false}, {"false", false}, {"true", true},
-	} {
-		t.Run(tc.development, func(t *testing.T) {
-			t.Setenv(rleEnableAllEnvVar, tc.development)
+func TestMonitorAlwaysVisibleAndEnabled(t *testing.T) {
+	for _, development := range []string{"", "false", "true"} {
+		t.Run(development, func(t *testing.T) {
+			t.Setenv(rleEnableAllEnvVar, development)
 			root := NewRootCommand()
 			command, _, err := root.Find([]string{"monitor"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if command.Hidden == tc.enabled {
-				t.Fatal("incorrect monitor visibility")
+			if command.Hidden {
+				t.Fatal("monitor must be visible regardless of AZD_AI_RLE_ENABLE_ALL")
 			}
 			rollout := newRolloutCommand()
 			if rollout.Flags().Lookup("monitor") != nil {
 				t.Fatal("rollout must not expose a --monitor flag")
 			}
-			if strings.Contains(rollout.Long, "local dashboard") != tc.enabled {
-				t.Fatal("monitor help must be scoped to development mode")
-			}
-			if tc.enabled {
-				return
-			}
-			cmd := newMonitorCommand()
-			cmd.SetOut(io.Discard)
-			cmd.SetErr(io.Discard)
-			if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "development mode") {
-				t.Fatalf("disabled monitor did not reject execution: %v", err)
+			if !strings.Contains(rollout.Long, "local dashboard") {
+				t.Fatal("rollout help must always describe the local dashboard")
 			}
 		})
 	}

@@ -40,9 +40,6 @@ The monitor stays running until Ctrl+C. Use --no-browser to open the printed
 link manually and enter the local access code.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := requireRolloutMonitorEnabled(); err != nil {
-				return err
-			}
 			rolloutID = strings.TrimSpace(rolloutID)
 			if rolloutID == "" {
 				return &azdext.LocalError{
@@ -95,22 +92,6 @@ func resolveRolloutOutputDir(directory string) (string, error) {
 		return "", fmt.Errorf("resolve rollout artifact directory: %w", err)
 	}
 	return path, nil
-}
-
-func rolloutMonitorEnabled() bool {
-	return rleEnableAllEnabled()
-}
-
-func requireRolloutMonitorEnabled() error {
-	if rolloutMonitorEnabled() {
-		return nil
-	}
-	return &azdext.LocalError{
-		Message:    "The rollout monitor is available only in RLE development mode.",
-		Code:       "rle_monitor_disabled",
-		Category:   azdext.LocalErrorCategoryUser,
-		Suggestion: "Set AZD_AI_RLE_ENABLE_ALL=true to enable local rollout monitoring.",
-	}
 }
 
 func invalidMonitorIDError(err error) error {
