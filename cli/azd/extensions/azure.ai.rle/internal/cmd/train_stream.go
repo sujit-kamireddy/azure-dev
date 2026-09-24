@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,10 +24,16 @@ import (
 
 const (
 	trainStreamHandshakeTimeout = 30 * time.Second
-	// The service sends a heartbeat every 30s and a poll result every second, so
-	// silence for this long means the connection is dead rather than idle.
-	trainStreamReadTimeout = 90 * time.Second
+	// How long to spend writing a pong before giving up on the connection.
+	trainStreamWriteTimeout = 10 * time.Second
 )
+
+// The service pings every 30s, and a ping extends the read deadline, so silence
+// for this long means the connection is dead rather than idle. Data frames alone
+// are not a liveness signal: the service sends one only when an artifact actually
+// changes, and a single rollout can run for minutes without writing anything.
+// A variable so tests can exercise an idle connection without waiting 90s.
+var trainStreamReadTimeout = 90 * time.Second
 
 // trainStreamArtifacts is what the local dashboard reads. Frames naming anything
 // else are ignored: the artifact name becomes a path on the caller's disk, and a
@@ -228,6 +235,24 @@ func followTrainingRun(
 
 	fmt.Fprintf(out, "Streaming run artifacts to %s\n", mirror.directory)
 	fmt.Fprintf(out, "View them with: python dashboard_server.py --root %s\n", logsRoot)
+
+	// gorilla replies to a ping without touching the read deadline, so without
+	// this an idle-but-healthy connection is torn down mid-run: the service only
+	// sends data frames when an artifact changes, and rollouts take minutes.
+	connection.SetPingHandler(func(message string) error {
+		if err := connection.SetReadDeadline(time.Now().Add(trainStreamReadTimeout)); err != nil {
+			return err
+		}
+		err := connection.WriteControl(
+			websocket.PongMessage,
+			[]byte(message),
+			time.Now().Add(trainStreamWriteTimeout),
+		)
+		if errors.Is(err, websocket.ErrCloseSent) {
+			return nil
+		}
+		return err
+	})
 
 	seen := map[string]bool{}
 	status := ""

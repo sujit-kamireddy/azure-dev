@@ -8,12 +8,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -271,5 +273,55 @@ func TestDefaultLogsRootPrefersTheDashboardEnvironmentVariable(t *testing.T) {
 	t.Setenv("LOOM_LOGS_ROOT", "")
 	if !strings.HasSuffix(defaultLogsRoot(), "loom-runs") {
 		t.Fatalf("defaultLogsRoot is %s", defaultLogsRoot())
+	}
+}
+
+// A run is mostly silence: the service sends a data frame only when an artifact
+// changes, and a rollout can take minutes. The connection is held open by pings,
+// which must count as liveness or a healthy run is cut off part way through.
+func TestFollowTrainingRunSurvivesAnIdleConnection(t *testing.T) {
+	original := trainStreamReadTimeout
+	trainStreamReadTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { trainStreamReadTimeout = original })
+
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+
+		hello, _ := json.Marshal(map[string]any{
+			"type": "hello", "job_id": "ftjob-1", "status": "running",
+		})
+		if err := connection.WriteMessage(websocket.TextMessage, hello); err != nil {
+			return
+		}
+
+		// Nothing but pings for well over the read timeout, the way the service
+		// behaves while a rollout is running.
+		deadline := time.Now().Add(900 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			err := connection.WriteControl(
+				websocket.PingMessage, nil, time.Now().Add(time.Second))
+			if err != nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		end, _ := json.Marshal(map[string]any{"type": "end", "status": "succeeded"})
+		_ = connection.WriteMessage(websocket.TextMessage, end)
+	}))
+	defer server.Close()
+
+	status, err := followTrainingRun(
+		context.Background(), server.URL, "******", "ftjob-1", t.TempDir(), io.Discard)
+	if err != nil {
+		t.Fatalf("an idle connection ended the stream: %v", err)
+	}
+	if status != "succeeded" {
+		t.Fatalf("status is %q, want the status that arrived after the idle gap", status)
 	}
 }

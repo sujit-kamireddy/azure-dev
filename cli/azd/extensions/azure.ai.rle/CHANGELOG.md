@@ -12,6 +12,14 @@
   the bytes already on disk. A dropped stream is reported but still exits zero,
   because the job was accepted and is running on the service.
 
+- Fixed `azd ai rle train --follow` dropping the artifact stream part way
+  through a healthy run, with `read from the run stream: i/o timeout`. The
+  service sends a data frame only when an artifact changes, and a single
+  rollout can run for minutes without writing one, so the connection is held
+  open by pings. gorilla replies to a ping without touching the read deadline,
+  so the 90s deadline expired on a connection that was never dead. Pings now
+  count as liveness.
+
 - `azd ai rle train --follow` now also serves the rollout dashboard for the run
   it submitted and prints its address, so submitting a run and watching its
   rollouts is one command. The dashboard opens empty, because the first rollout
