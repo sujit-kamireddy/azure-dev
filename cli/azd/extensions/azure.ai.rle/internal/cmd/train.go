@@ -86,7 +86,7 @@ FOUNDRY_PROJECT_ENDPOINT.`,
 	cmd.Flags().StringVar(&flags.logsRoot, "logs-root", "",
 		"Where --follow writes mirrored runs. Defaults to $LOOM_LOGS_ROOT, else ~/loom-runs.")
 	cmd.Flags().BoolVar(&flags.noBrowser, "no-browser", false,
-		"With --follow, print the rollout dashboard address without opening a browser.")
+		"With --follow, print the job monitor address without opening a browser.")
 	cmd.Flags().IntVar(&flags.taskCount, "task-count", 0,
 		"Train on only the first N tasks of the training dataset, for a smaller run. "+
 			"Sets the max_train_examples training option (0 uses the whole dataset).")
@@ -352,18 +352,20 @@ func (a *trainAction) followJob(client *finetuneClient, jobID string) error {
 	// is to watch them land, not to read them once it is over.
 	//
 	// It starts empty: the first rollout of a run takes minutes. The page polls,
-	// so rollouts appear as the run records them.
+	// so rollouts appear as the run records them. It reads the same mirror the
+	// stream below writes, so the metrics and the log are the ones already being
+	// downloaded -- following a run fetches its artifacts once, not twice.
 	dashboard := make(chan struct{})
 	go func() {
 		defer close(dashboard)
 		source := &jobRollouts{client: client, jobID: jobID}
 		if err := runJobMonitor(
-			a.cmd.Context(), source, source, jobID, a.flags.noBrowser,
+			a.cmd.Context(), source, source, jobID, runMirrorDir(logsRoot, jobID), a.flags.noBrowser,
 			a.cmd.OutOrStdout(), a.cmd.ErrOrStderr(),
 		); err != nil {
 			// The stream is the part that must keep working; a dashboard that
 			// cannot start is worth saying once and no more.
-			fmt.Fprintf(a.cmd.ErrOrStderr(), "The rollout dashboard did not start: %v\n", err)
+			fmt.Fprintf(a.cmd.ErrOrStderr(), "The job monitor did not start: %v\n", err)
 		}
 	}()
 
@@ -386,7 +388,7 @@ func (a *trainAction) followJob(client *finetuneClient, jobID string) error {
 	// The run is over but its rollouts are not read yet. Hold the dashboard open
 	// until the user stops it, rather than closing the window they were sent to.
 	fmt.Fprintf(a.cmd.OutOrStdout(),
-		"\nThe rollout dashboard is still running. Press Ctrl+C to stop it.\n")
+		"\nThe job monitor is still running. Press Ctrl+C to stop it.\n")
 	<-dashboard
 	return nil
 }

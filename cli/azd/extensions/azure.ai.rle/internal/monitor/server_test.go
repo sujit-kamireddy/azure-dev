@@ -346,9 +346,40 @@ func TestSingleRolloutModeHasNoIndex(t *testing.T) {
 	}
 }
 
+// A single captured rollout and a whole training job are different things to
+// watch, and the printed name is how the user tells which one is in front of
+// them. Only a job has steps, metrics and a run log behind it.
+func TestJobModeIsNamedAJobMonitorAndRolloutModeIsNot(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stub := &stubJobSource{entries: []rollouts.Entry{
+		{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Sequence: 1},
+	}}
+	ready := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() { done <- RunJob(ctx, stub, stub, "ftjob-77", "", true, readyWriter{ready}, io.Discard) }()
+
+	var output string
+	select {
+	case output = <-ready:
+	case <-time.After(10 * time.Second):
+		t.Fatal("job monitor did not start")
+	}
+	if !strings.HasPrefix(output, "Job monitor for ftjob-77 (1 rollouts so far): ") {
+		t.Fatalf("heading = %q, want it to name the job monitor and its job", output)
+	}
+	if strings.Contains(output, "Rollout monitor") {
+		t.Fatalf("heading = %q, want a job monitor not a rollout monitor", output)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunJobSurfacesListFailure(t *testing.T) {
 	stub := &stubJobSource{err: errors.New("service unavailable")}
-	err := RunJob(context.Background(), stub, stub, "ftjob-1", true, io.Discard, io.Discard)
+	err := RunJob(context.Background(), stub, stub, "ftjob-1", "", true, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "service unavailable") {
 		t.Fatalf("err = %v, want the listing failure", err)
 	}

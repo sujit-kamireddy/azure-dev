@@ -573,12 +573,14 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	defer cancel()
 
 	started := make(chan string, 1)
+	monitored := make(chan string, 1)
 	originalMonitor := runJobMonitor
 	runJobMonitor = func(
 		ctx context.Context, _ rollouts.Reader, _ rollouts.Lister,
-		jobID string, _ bool, _, _ io.Writer,
+		jobID string, runDir string, _ bool, _, _ io.Writer,
 	) error {
 		started <- jobID
+		monitored <- runDir
 		<-ctx.Done()
 		return nil
 	}
@@ -594,8 +596,9 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	}
 	t.Cleanup(func() { followTrainingRunFunc = originalFollow })
 
+	logsRoot := t.TempDir()
 	action, output := stubbedTrain(t, ctx,
-		&rleTrainFlags{follow: true, noBrowser: true, logsRoot: t.TempDir()})
+		&rleTrainFlags{follow: true, noBrowser: true, logsRoot: logsRoot})
 
 	returned := make(chan error, 1)
 	go func() { returned <- action.Run() }()
@@ -606,7 +609,13 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 			t.Fatalf("dashboard opened %q, want the submitted job", jobID)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("--follow did not start the rollout dashboard")
+		t.Fatal("--follow did not start the job monitor")
+	}
+
+	// The dashboard must read the same directory the stream writes, or it would
+	// show a run with no metrics while they are being downloaded beside it.
+	if runDir := <-monitored; runDir != filepath.Join(logsRoot, "rle-harness", "ftjob-1") {
+		t.Fatalf("dashboard read %q, want the run mirror --follow writes", runDir)
 	}
 
 	<-streamed
@@ -631,8 +640,8 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	if !strings.Contains(output.String(), "Final status: succeeded") {
 		t.Fatalf("output = %q, want the run's final status", output.String())
 	}
-	if !strings.Contains(output.String(), "dashboard is still running") {
-		t.Fatalf("output = %q, want the dashboard to outlive the run", output.String())
+	if !strings.Contains(output.String(), "job monitor is still running") {
+		t.Fatalf("output = %q, want the monitor to outlive the run", output.String())
 	}
 }
 

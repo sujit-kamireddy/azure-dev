@@ -30,6 +30,7 @@ func newMonitorCommand() *cobra.Command {
 	var endpoint string
 	var noBrowser bool
 	var outputDir string
+	var logsRoot string
 	cmd := &cobra.Command{
 		Use:   "monitor (--rollout-id <id> | --job-id <id>)",
 		Short: "Open a local dashboard for a saved rollout or a training job's rollouts",
@@ -75,7 +76,7 @@ link manually and enter the local access code.`,
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			defer stop()
 			if jobID != "" {
-				return runMonitorForJob(ctx, cmd, jobID, endpoint, noBrowser)
+				return runMonitorForJob(ctx, cmd, jobID, endpoint, logsRoot, noBrowser)
 			}
 			if err := rollouts.ValidateID(rolloutID); err != nil {
 				return invalidMonitorIDError(err)
@@ -101,6 +102,8 @@ link manually and enter the local access code.`,
 	cmd.Flags().StringVar(&jobID, "job-id", "", "ID of a training job whose recorded rollouts to browse.")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Fine-tuning endpoint that owns the job (used with --job-id).")
 	cmd.Flags().StringVar(&outputDir, "output-dir", defaultRolloutOutputDir, "Artifact root used by rollout --output-dir.")
+	cmd.Flags().StringVar(&logsRoot, "logs-root", "",
+		"Root that train --follow mirrored the run into, to show its metrics and log (used with --job-id).")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the dashboard link without opening a browser.")
 	return cmd
 }
@@ -145,6 +148,7 @@ func runMonitorForJob(
 	cmd *cobra.Command,
 	jobID string,
 	endpoint string,
+	logsRoot string,
 	noBrowser bool,
 ) error {
 	// Only the fine-tuning endpoint matters here; skip the project lookup when it is given.
@@ -165,7 +169,28 @@ func runMonitorForJob(
 		return err
 	}
 	source := &jobRollouts{client: client, jobID: jobID}
-	return runJobMonitor(ctx, source, source, jobID, noBrowser, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	return runJobMonitor(
+		ctx, source, source, jobID, resolveMonitorRunDir(logsRoot, jobID), noBrowser,
+		cmd.OutOrStdout(), cmd.ErrOrStderr(),
+	)
+}
+
+// resolveMonitorRunDir finds the local mirror of a job, if one was made.
+//
+// Monitoring a job does not require having followed it -- the rollouts come
+// from the service either way -- so an absent mirror is not an error. It means
+// only that this machine has no metrics or log for the run, and the dashboard
+// shows the rollouts alone.
+func resolveMonitorRunDir(logsRoot string, jobID string) string {
+	root := strings.TrimSpace(logsRoot)
+	if root == "" {
+		root = defaultLogsRoot()
+	}
+	directory := runMirrorDir(root, jobID)
+	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
+		return ""
+	}
+	return directory
 }
 
 func resolveRolloutOutputDir(directory string) (string, error) {
@@ -204,7 +229,7 @@ func validateMonitorOutput(cmd *cobra.Command) error {
 	flag := cmd.Flag("output")
 	if flag != nil && flag.Changed {
 		return &azdext.LocalError{
-			Message:    "--output cannot be used with the rollout monitor.",
+			Message:    "--output cannot be used with the monitor.",
 			Code:       "rle_monitor_conflicting_arguments",
 			Category:   azdext.LocalErrorCategoryUser,
 			Suggestion: "Remove --output. The monitor prints its local browser link and access code.",

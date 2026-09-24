@@ -70,8 +70,15 @@ type runMirror struct {
 	digests   map[string]string
 }
 
+// runMirrorDir is where one job's artifacts are mirrored. Both the streamer
+// that writes them and the monitor that reads them resolve the path here, so
+// the two cannot drift apart.
+func runMirrorDir(logsRoot string, jobID string) string {
+	return filepath.Join(logsRoot, "rle-harness", jobID)
+}
+
 func newRunMirror(logsRoot string, jobID string) (*runMirror, error) {
-	directory := filepath.Join(logsRoot, "rle-harness", jobID)
+	directory := runMirrorDir(logsRoot, jobID)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return nil, fmt.Errorf("create local run directory %s: %w", directory, err)
 	}

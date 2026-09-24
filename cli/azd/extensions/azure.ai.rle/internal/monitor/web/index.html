@@ -27,6 +27,24 @@
       <p id="error-message" role="alert"></p>
       <button id="retry" type="button">Try again</button>
     </section>
+    <section id="run-overview" class="panel" aria-labelledby="run-overview-title" hidden>
+      <div class="list-heading">
+        <div>
+          <h2 id="run-overview-title">Training run</h2>
+          <p class="muted"><span class="muted">JOB</span> <code id="run-job-id"></code> <span id="run-progress"></span></p>
+        </div>
+        <p id="run-pending" class="muted" hidden>Waiting for the run to report its first step…</p>
+      </div>
+      <div id="run-warnings" class="inline-notices" role="status" hidden></div>
+      <section id="run-headline" class="metrics" aria-label="Latest training metrics"></section>
+      <div id="run-facts" class="run-facts"></div>
+      <div id="run-charts" class="run-charts"></div>
+      <details id="run-log-panel" class="detail-section">
+        <summary>Run log <span id="run-log-size" class="muted"></span></summary>
+        <p class="section-note">The tail of the log this run has written so far.</p>
+        <pre id="run-log-text" class="run-log" tabindex="0" role="region" aria-label="Training run log"></pre>
+      </details>
+    </section>
     <section id="rollout-list" class="panel" aria-labelledby="rollout-list-title" hidden>
       <div class="list-heading">
         <div>

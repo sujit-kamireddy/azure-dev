@@ -395,3 +395,303 @@ export async function fetchRolloutIndex(fetcher = fetch, after = "") {
     throw new Error("The local monitor returned invalid JSON. Check the monitor terminal, then try again.");
   }
 }
+
+// ---------------------------------------------------------------------------
+// Training run artifacts
+//
+// A job is not only the rollouts it recorded. These read what the run is -- its
+// environment, model and hyperparameters -- and how it is going, so a run can
+// be judged from the dashboard rather than from the terminal that submitted it.
+// ---------------------------------------------------------------------------
+
+// The charts a training run is actually read by. Each panel answers one
+// question, which is why related series share an axis rather than getting a
+// panel each: reward means little without the validation reward beside it.
+//
+// Keys are the recipe's own metric names. A series whose key never appears is
+// dropped rather than drawn flat at zero, because a metric the recipe did not
+// emit is not the same as a metric that was zero.
+export const RUN_CHARTS = [
+  {
+    id: "reward",
+    title: "Reward",
+    note: "Training reward is the policy on rollouts it learns from; validation is held out. "
+      + "They should rise together. Training alone rising is overfitting.",
+    series: [
+      { key: "env/all/reward/total", name: "Train", tone: "primary" },
+      { key: "rle_harness/validation_mean_reward", name: "Validation", tone: "accent" },
+    ],
+  },
+  {
+    id: "success",
+    title: "Task success rate",
+    note: "The fraction of rollouts the environment judged successful, which is the demo number.",
+    range: [0, 1],
+    series: [
+      { key: "env/all/rle_harness/task_success", name: "Train", tone: "primary" },
+      { key: "rle_harness/validation_success_rate", name: "Validation", tone: "accent" },
+    ],
+  },
+  {
+    id: "signal",
+    title: "Learning signal",
+    note: "Groups where rollouts disagree are the only ones that teach anything. "
+      + "All-good means the tasks are too easy to learn from; all-bad means too hard.",
+    range: [0, 1],
+    series: [
+      { key: "env/all/by_group/frac_mixed", name: "Mixed", tone: "positive" },
+      { key: "env/all/by_group/frac_all_good", name: "All good", tone: "primary" },
+      { key: "env/all/by_group/frac_all_bad", name: "All bad", tone: "negative" },
+    ],
+  },
+  {
+    id: "stability",
+    title: "Gradient norm",
+    note: "The size of each update. A spike is an update large enough to move the policy somewhere "
+      + "it cannot recover from, and usually precedes a reward collapse on the next step.",
+    series: [{ key: "skyrl.ai/grad_norm", name: "Grad norm", tone: "negative" }],
+  },
+  {
+    id: "entropy",
+    title: "Policy entropy",
+    note: "How varied the sampled tokens are. Falling entropy is the policy committing; "
+      + "falling fast means it has stopped exploring and rewards will flatten.",
+    series: [{ key: "optim/entropy", name: "Entropy", tone: "primary" }],
+  },
+  {
+    id: "divergence",
+    title: "KL from the sampling policy",
+    note: "How far the trained policy has moved from the one that generated the rollouts. "
+      + "Spikes here tend to show up as a reward dip one step later.",
+    series: [
+      { key: "optim/kl_sample_train_v1", name: "KL v1", tone: "primary" },
+      { key: "optim/kl_sample_train_v2", name: "KL v2", tone: "accent" },
+    ],
+  },
+];
+
+// The step number a metrics row belongs to. Rows carry it explicitly; falling
+// back to arrival order keeps a run readable if a row ever omits it.
+function stepOf(row, index) {
+  return isNumber(row?.step) ? row.step : index;
+}
+
+// runCharts turns metrics rows into drawable panels.
+//
+// Rows arrive one per step over hours, and different metrics appear at
+// different steps -- validation only on evaluation steps, entropy only for RL.
+// Every series is therefore its own sparse list of points rather than a column
+// that has to line up with the others.
+export function runCharts(rows = [], specs = RUN_CHARTS) {
+  const usable = Array.isArray(rows) ? rows.filter(isRecord) : [];
+  const charts = [];
+  for (const spec of specs) {
+    const series = [];
+    for (const definition of spec.series) {
+      const points = [];
+      usable.forEach((row, index) => {
+        const value = row[definition.key];
+        if (isNumber(value)) points.push({ step: stepOf(row, index), value });
+      });
+      if (points.length) series.push({ ...definition, points });
+    }
+    if (series.length) charts.push({ ...spec, series });
+  }
+  return charts;
+}
+
+// chartGeometry places a panel's points in a fixed 400x160 viewBox.
+//
+// Held separately from the drawing so the arithmetic that decides whether a
+// collapse is visible can be tested without a DOM. A single step is drawn at
+// the left edge rather than the middle: a run with one step should look like a
+// run that has just started, not one centred and finished.
+export function chartGeometry(chart, width = 400, height = 160) {
+  const points = chart.series.flatMap((entry) => entry.points);
+  if (!points.length) return null;
+  const steps = points.map((point) => point.step);
+  const minStep = Math.min(...steps);
+  const maxStep = Math.max(...steps);
+  const values = points.map((point) => point.value);
+  let minValue = chart.range ? chart.range[0] : Math.min(...values);
+  let maxValue = chart.range ? chart.range[1] : Math.max(...values);
+  if (!chart.range) {
+    // A run that has not moved yet is still a run. Padding a flat series keeps
+    // it a line across the middle instead of a divide-by-zero.
+    if (minValue === maxValue) {
+      const padding = Math.abs(minValue) > 0 ? Math.abs(minValue) * 0.1 : 1;
+      minValue -= padding;
+      maxValue += padding;
+    }
+    if (minValue > 0) minValue = 0;
+  }
+  const spanX = maxStep - minStep;
+  const spanY = maxValue - minValue || 1;
+  const x = (step) => spanX === 0 ? 0 : (step - minStep) / spanX * width;
+  const y = (value) => height - (value - minValue) / spanY * height;
+  return {
+    width, height, minStep, maxStep, minValue, maxValue,
+    series: chart.series.map((entry) => ({
+      ...entry,
+      coordinates: entry.points.map((point) => ({ x: x(point.step), y: y(point.value), ...point })),
+    })),
+  };
+}
+
+export function chartPath(coordinates) {
+  return coordinates
+    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .join(" ");
+}
+
+// The headline numbers, with how far each has moved.
+//
+// "Is it working" is a comparison, not a value: 0.72 means nothing until it is
+// 0.72 up from 0.61. The latest step carrying each metric is used rather than
+// the last row, because validation is only measured every few steps.
+export function runHeadline(rows = []) {
+  const usable = Array.isArray(rows) ? rows.filter(isRecord) : [];
+  const readings = (key) => {
+    const found = [];
+    usable.forEach((row, index) => {
+      if (isNumber(row[key])) found.push({ step: stepOf(row, index), value: row[key] });
+    });
+    return found;
+  };
+  const headline = (label, key, format) => {
+    const found = readings(key);
+    if (!found.length) return null;
+    const latest = found[found.length - 1];
+    const previous = found.length > 1 ? found[found.length - 2] : null;
+    return {
+      label, key, format,
+      value: latest.value,
+      step: latest.step,
+      delta: previous ? latest.value - previous.value : null,
+    };
+  };
+  return [
+    headline("Validation reward", "rle_harness/validation_mean_reward", "reward"),
+    headline("Validation success", "rle_harness/validation_success_rate", "percent"),
+    headline("Train reward", "env/all/reward/total", "reward"),
+    headline("Mixed groups", "env/all/by_group/frac_mixed", "percent"),
+    headline("Grad norm", "skyrl.ai/grad_norm", "reward"),
+  ].filter(Boolean);
+}
+
+// A run is a collapse when one update destroys the policy, which is the failure
+// this dashboard exists to make obvious. It is worth naming on the page rather
+// than leaving the user to infer it from a line that went down.
+export function runWarnings(rows = []) {
+  const charts = runCharts(rows, RUN_CHARTS);
+  const series = (chartID, name) => charts.find((chart) => chart.id === chartID)
+    ?.series.find((entry) => entry.name === name)?.points ?? [];
+  const warnings = [];
+
+  const train = series("reward", "Train");
+  if (train.length > 1) {
+    const peak = train.reduce((best, point) => point.value > best.value ? point : best, train[0]);
+    const latest = train[train.length - 1];
+    // Relative, so it holds whatever the environment's reward scale is.
+    if (peak.value > 0 && latest.value < peak.value * 0.5 && latest.step > peak.step) {
+      warnings.push(`Training reward has fallen to ${latest.value.toFixed(3)} from ${peak.value.toFixed(3)}`
+        + ` at step ${peak.step}. A drop this large is usually one oversized update, not slow learning:`
+        + ` check the gradient norm at the step it happened and lower the learning rate or raise the batch size.`);
+    }
+  }
+
+  const mixed = series("signal", "Mixed");
+  if (mixed.length >= 3 && mixed.slice(-3).every((point) => point.value === 0)) {
+    warnings.push("No group has produced mixed outcomes for the last three steps, so every group's advantage"
+      + " is zero and no gradient is being learned from. The tasks are either all passing or all failing.");
+  }
+
+  return warnings;
+}
+
+// Learning rates are written as 1e-5 everywhere they are set, so showing
+// 0.00001 makes the reader convert it back before they can compare it to the
+// recipe they typed it into.
+export function settingLabel(value) {
+  if (!isNumber(value) || value === 0) return value;
+  return Math.abs(value) < 0.001 ? value.toExponential() : value;
+}
+
+// runFacts flattens run_meta.json and config.json into the labelled rows the
+// page shows. Both documents are the recipe's own, so anything unrecognised is
+// left out here rather than guessed at.
+export function runFacts(overview) {  if (!isRecord(overview)) return { identity: [], model: [], dataset: [], training: [] };
+  const meta = isRecord(overview.meta) ? overview.meta : {};
+  const config = isRecord(overview.config) ? overview.config : {};
+  const builder = isRecord(config.dataset_builder) ? config.dataset_builder : {};
+  const environment = isRecord(meta.environment) ? meta.environment : {};
+  const model = isRecord(meta.model) ? meta.model : {};
+  const dataset = isRecord(meta.dataset) ? meta.dataset : {};
+
+  const rows = (entries) => entries.filter(([, value]) => present(value) && value !== "");
+  return {
+    identity: rows([
+      ["Environment", environment.name],
+      ["Version", environment.version],
+      ["Recipe", meta.recipe],
+      ["Started", meta.started_at],
+    ]),
+    model: rows([
+      ["Base model", model.model_name],
+      ["Renderer", model.renderer_name],
+      ["Loom session", model.loom_session_id],
+      ["Context window", isNumber(model.max_sequence_tokens)
+        ? `${model.max_sequence_tokens.toLocaleString()} tokens` : null],
+    ]),
+    dataset: rows([
+      // The recipe reports the file's row count here, not the count it trains
+      // on, so the truncated number is shown beside it rather than instead.
+      ["Training cases", isNumber(builder.max_train_examples)
+        ? `${builder.max_train_examples} of ${dataset.training_cases ?? "?"}`
+        : dataset.training_cases],
+      ["Validation cases", dataset.validation_cases],
+      ["Group size", builder.group_size],
+      ["Groups per batch", builder.groups_per_batch],
+      ["Rollouts per step", isNumber(builder.group_size) && isNumber(builder.groups_per_batch)
+        ? builder.group_size * builder.groups_per_batch : null],
+      ["Epochs", builder.num_epochs],
+    ]),
+    training: rows([
+      ["Learning rate", settingLabel(config.learning_rate)],
+      ["Max steps", config.max_steps],
+      ["Evaluate every", config.eval_every],
+      ["Save every", config.save_every],
+      ["LoRA rank", config.lora_rank],
+      ["Loss", config.loss_fn],
+      ["Temperature", config.temperature],
+      ["KL penalty", settingLabel(config.kl_penalty_coef)],
+      ["Max tokens", config.max_tokens],
+    ]),
+  };
+}
+
+async function fetchRun(fetcher, url) {
+  let result;
+  try {
+    result = await fetcher(url, { credentials: "same-origin", cache: "no-store",
+      headers: { Accept: "application/json" } });
+  } catch {
+    throw new Error("Could not reach the local monitor. Check that the monitor command is still running, then try again.");
+  }
+  // 404 is how the monitor says this job was never followed on this machine,
+  // which is a normal way to use it and not a failure to report.
+  if (result.status === 404) return null;
+  if (!result.ok) {
+    throw new Error(`The local monitor returned HTTP ${result.status}. Check the monitor terminal, then try again.`);
+  }
+  try {
+    return await result.json();
+  } catch {
+    throw new Error("The local monitor returned invalid JSON. Check the monitor terminal, then try again.");
+  }
+}
+
+export const fetchRunOverview = (fetcher = fetch) => fetchRun(fetcher, "/api/run");
+export const fetchRunMetrics = (fetcher = fetch) => fetchRun(fetcher, "/api/run/metrics");
+export const fetchRunLog = (fetcher = fetch, offset = 0) =>
+  fetchRun(fetcher, `/api/run/logs?offset=${encodeURIComponent(String(offset))}`);
