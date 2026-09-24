@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import {
-  buildGraph, chartScales, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
+  buildGraph, chartScales, fetchRolloutIndex, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
   sequenceData, sequenceLabel, sequencePage, TOKEN_PAGE_SIZE,
 } from "./data.mjs";
 
@@ -744,15 +744,157 @@ byID("token-jump-form").addEventListener("submit", (event) => {
   if (byID("token-position").reportValidity()) jumpToPosition(byID("token-position").valueAsNumber);
 });
 
+let rolloutIndex = null;
+
+function optionsFor(select, values, label) {
+  const current = select.value;
+  select.replaceChildren(element("option", label, ""));
+  for (const value of values) {
+    const option = element("option", String(value));
+    option.value = String(value);
+    select.append(option);
+  }
+  select.value = values.map(String).includes(current) ? current : "";
+}
+
+// The training path knows which checkpoint sampled a rollout but not the step
+// number, so the checkpoint is what actually separates one step from the next.
+// Preferring it keeps a step's validation and training rollouts under one key.
+function stepLabel(entry) {
+  if (entry.checkpoint_id) return entry.checkpoint_id;
+  return isNumber(entry.step) ? String(entry.step) : "";
+}
+
+function visibleEntries() {
+  const split = byID("list-split").value;
+  const step = byID("list-step").value;
+  return rolloutIndex.data.filter((entry) => {
+    if (split && (entry.split || "") !== split) return false;
+    if (step && stepLabel(entry) !== step) return false;
+    return true;
+  });
+}
+
+function renderRolloutList() {
+  const entries = visibleEntries();
+  byID("list-job-id").textContent = rolloutIndex.job_id || "";
+  byID("list-count").textContent = entries.length === rolloutIndex.data.length
+    ? `· ${count(entries.length)} recorded`
+    : `· ${count(entries.length)} of ${count(rolloutIndex.data.length)} recorded`;
+  const body = byID("list-body");
+  body.replaceChildren();
+  for (const entry of entries) {
+    const row = element("tr");
+    row.append(element("td", String(entry.sequence ?? "")));
+    const open = element("button", short(entry.rollout_id, 14), "link-button");
+    open.type = "button";
+    open.title = entry.rollout_id;
+    open.addEventListener("click", () => openRollout(entry.rollout_id));
+    const identity = element("td");
+    identity.append(open);
+    row.append(identity);
+    row.append(element("td", entry.split || "—"));
+    row.append(element("td", stepLabel(entry) || "—"));
+    row.append(element("td", isNumber(entry.reward) ? entry.reward.toFixed(3) : "—"));
+    // A recorded rollout may legitimately carry no verdict, which is not a failure.
+    const outcome = element("td");
+    if (entry.success === true) outcome.append(element("span", "Success", "badge positive"));
+    else if (entry.success === false) outcome.append(element("span", "Failure", "badge negative"));
+    else outcome.append(element("span", "Not reported", "badge neutral"));
+    row.append(outcome);
+    row.append(element("td", isNumber(entry.latency_s) ? `${entry.latency_s.toFixed(1)}s` : "—"));
+    const task = element("td", short(entry.task_id || "—", 22));
+    if (entry.task_id) task.title = entry.task_id;
+    row.append(task);
+    body.append(row);
+  }
+  byID("list-empty").hidden = rolloutIndex.data.length > 0;
+  byID("list-table").hidden = entries.length === 0;
+}
+
+function showRolloutList() {
+  byID("snapshot").hidden = true;
+  byID("rollout-list").hidden = false;
+  byID("load-status").className = "sr-only";
+  byID("load-status").textContent = `${rolloutIndex.data.length} rollouts recorded.`;
+}
+
+async function openRollout(rolloutID) {
+  byID("load-status").className = "notice";
+  byID("load-status").textContent = "Loading rollout…";
+  byID("load-error").hidden = true;
+  try {
+    setSnapshot(await fetchSnapshot(fetch, rolloutID));
+    byID("rollout-list").hidden = true;
+    byID("back-to-list").hidden = false;
+    byID("main").focus();
+  } catch (error) {
+    byID("load-status").className = "sr-only";
+    byID("load-status").textContent = "";
+    byID("load-error").hidden = false;
+    byID("error-message").textContent = error.message;
+  }
+}
+
+function refreshFilters() {
+  const splits = [...new Set(rolloutIndex.data.map((entry) => entry.split).filter(Boolean))].sort();
+  const steps = [...new Set(rolloutIndex.data.map(stepLabel).filter(Boolean))].sort();
+  optionsFor(byID("list-split"), splits, "All");
+  optionsFor(byID("list-step"), steps, "All");
+}
+
+// A training run records rollouts for as long as it lasts, so the list is
+// polled rather than read once. Only what is new is asked for, and only the
+// list view polls: reading a rollout should not be interrupted by the table
+// underneath it changing.
+const pollIntervalMs = 5000;
+let pollTimer = null;
+
+function startPolling() {
+  if (pollTimer !== null) return;
+  pollTimer = setInterval(pollForNewRollouts, pollIntervalMs);
+}
+
+async function pollForNewRollouts() {
+  if (!rolloutIndex || byID("rollout-list").hidden) return;
+  const last = rolloutIndex.data.length
+    ? rolloutIndex.data[rolloutIndex.data.length - 1].rollout_id
+    : "";
+  let update;
+  try {
+    update = await fetchRolloutIndex(fetch, last);
+  } catch {
+    // A poll that cannot reach the monitor is not worth reporting: the rollouts
+    // already listed are still valid, and the next tick retries.
+    return;
+  }
+  if (!update || !update.data || update.data.length === 0) return;
+  // `reset` means the monitor answered with the whole list rather than the part
+  // that is new, so appending it would double every rollout already shown.
+  if (update.reset) rolloutIndex.data = update.data;
+  else rolloutIndex.data.push(...update.data);
+  refreshFilters();
+  renderRolloutList();
+}
+
 async function load() {
   byID("retry").disabled = true;
   byID("load-error").hidden = true;
   byID("load-status").className = "notice";
   byID("load-status").textContent = "Loading saved snapshot…";
   try {
+    rolloutIndex = await fetchRolloutIndex();
+    if (rolloutIndex) {
+      refreshFilters();
+      renderRolloutList();
+      showRolloutList();
+      startPolling();
+      return;
+    }
     setSnapshot(await fetchSnapshot());
   } catch (error) {
     byID("snapshot").hidden = true;
+    byID("rollout-list").hidden = true;
     byID("load-status").className = "sr-only";
     byID("load-status").textContent = "";
     byID("load-error").hidden = false;
@@ -761,6 +903,14 @@ async function load() {
     byID("retry").disabled = false;
   }
 }
+
+byID("back-button").addEventListener("click", () => {
+  byID("back-to-list").hidden = true;
+  renderRolloutList();
+  showRolloutList();
+});
+byID("list-split").addEventListener("change", renderRolloutList);
+byID("list-step").addEventListener("change", renderRolloutList);
 
 byID("retry").addEventListener("click", load);
 byID("final-response-toggle").addEventListener("click", () => {

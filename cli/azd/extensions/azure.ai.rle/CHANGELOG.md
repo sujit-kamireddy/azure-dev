@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- `azd ai rle train` gained `--follow`, which mirrors a run's artifacts to the
+  local disk while the job runs, into the layout the Loom cookbook's dashboard
+  already discovers. An in-flight Foundry run can be opened in that dashboard
+  without waiting for the job to finish. `--logs-root` chooses where mirrored
+  runs land and defaults to `$LOOM_LOGS_ROOT`, else `~/loom-runs`.
+
+  Following is resumable: re-running `--follow` for the same job continues from
+  the bytes already on disk. A dropped stream is reported but still exits zero,
+  because the job was accepted and is running on the service.
+
+- Fixed `azd ai rle train --follow` dropping the artifact stream part way
+  through a healthy run, with `read from the run stream: i/o timeout`. The
+  service sends a data frame only when an artifact changes, and a single
+  rollout can run for minutes without writing one, so the connection is held
+  open by pings. gorilla replies to a ping without touching the read deadline,
+  so the 90s deadline expired on a connection that was never dead. Pings now
+  count as liveness.
+
+- `azd ai rle train --follow` now also serves the rollout dashboard for the run
+  it submitted and prints its address, so submitting a run and watching its
+  rollouts is one command. The dashboard opens empty, because the first rollout
+  of a run takes minutes, and fills in as the run records them. It stays up
+  after the run finishes, which is when its rollouts are finally all there to
+  read. `--no-browser` prints the address without opening a browser.
+
+  Without `--follow` the command exits as soon as the job is accepted, so there
+  is nothing left to serve a dashboard from; it names the `monitor --job-id`
+  command that opens one instead. The rollout ids a run generates are not
+  knowable ahead of time, so the job id is the only way back to them.
+
+- `azd ai rle monitor --job-id` now keeps up with a run in progress. It
+  previously read the rollout list once, so a dashboard opened during a run
+  stopped at whatever had landed when it started. The page polls, and asks only
+  for what was recorded after the rollouts it already holds, so the cost of a
+  poll does not grow with the length of the run.
 - `azd ai rle train` now reads its settings from the environment's own
   `rle.toml`. A new `[train]` section records the model, the training and
   validation dataset paths, the suffix and the max episode steps, and

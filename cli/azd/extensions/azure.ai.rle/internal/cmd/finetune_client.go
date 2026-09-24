@@ -19,6 +19,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
+
+	"azure.ai.rle/internal/rollouts"
 )
 
 // finetuneJobsPath is the public fine-tuning job creation route. The API version is
@@ -95,6 +97,11 @@ type finetuneJobResource struct {
 type finetuneJobListResponse struct {
 	Data    []finetuneJobResource `json:"data"`
 	HasMore bool                  `json:"has_more"`
+}
+
+type jobRolloutListResponse struct {
+	Data    []rollouts.Entry `json:"data"`
+	HasMore bool             `json:"has_more"`
 }
 
 type finetuneHTTPError struct {
@@ -208,6 +215,54 @@ func (c *finetuneClient) listRleJobs(
 		"azureai-project-is-default": "true",
 	}
 	if err := c.do(ctx, http.MethodGet, finetuneJobsPath+"?"+query.Encode(), headers, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// listJobRollouts returns the rollouts a training job recorded, newest last.
+// The service pages the index, so callers that want the whole run must follow
+// `after` until a page comes back short.
+func (c *finetuneClient) listJobRollouts(
+	ctx context.Context,
+	jobID string,
+	split string,
+	after string,
+	limit int,
+) (*jobRolloutListResponse, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	if strings.TrimSpace(split) != "" {
+		query.Set("split", split)
+	}
+	if strings.TrimSpace(after) != "" {
+		query.Set("after", after)
+	}
+
+	path := finetuneJobsPath + "/" + url.PathEscape(jobID) + "/rollouts"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+
+	var result jobRolloutListResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// getJobRollout returns one recorded rollout in the shape the dashboard reads,
+// so a remote rollout renders through the same path as a local artifact.
+func (c *finetuneClient) getJobRollout(
+	ctx context.Context,
+	jobID string,
+	rolloutID string,
+) (*rollouts.Snapshot, error) {
+	path := finetuneJobsPath + "/" + url.PathEscape(jobID) + "/rollouts/" + url.PathEscape(rolloutID)
+	var result rollouts.Snapshot
+	if err := c.do(ctx, http.MethodGet, path, nil, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

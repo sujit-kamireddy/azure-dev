@@ -24,6 +24,9 @@ type rleTrainFlags struct {
 	validationFile  string
 	suffix          string
 	maxEpisodeSteps int
+	follow          bool
+	logsRoot        string
+	noBrowser       bool
 	taskCount       int
 	endpoint        string
 
@@ -77,6 +80,13 @@ FOUNDRY_PROJECT_ENDPOINT.`,
 		"Suffix appended to the resulting fine-tuned model name. Defaults to train.suffix in ./rle.toml.")
 	cmd.Flags().IntVar(&flags.maxEpisodeSteps, "max-episode-steps", 0,
 		"Maximum steps the RLE executes per rollout (0 uses the service default).")
+	cmd.Flags().BoolVar(&flags.follow, "follow", false,
+		"Stream the run's logs and metrics locally until the job finishes, in the layout "+
+			"the Loom dashboard reads, and serve the run's rollouts in a local dashboard.")
+	cmd.Flags().StringVar(&flags.logsRoot, "logs-root", "",
+		"Where --follow writes mirrored runs. Defaults to $LOOM_LOGS_ROOT, else ~/loom-runs.")
+	cmd.Flags().BoolVar(&flags.noBrowser, "no-browser", false,
+		"With --follow, print the rollout dashboard address without opening a browser.")
 	cmd.Flags().IntVar(&flags.taskCount, "task-count", 0,
 		"Train on only the first N tasks of the training dataset, for a smaller run. "+
 			"Sets the max_train_examples training option (0 uses the whole dataset).")
@@ -297,6 +307,87 @@ func (a *trainAction) Run() error {
 		return err
 	}
 
+	if a.flags.follow {
+		return a.followJob(client, job.Id)
+	}
+
+	// Without --follow the command is about to exit, so there is nothing to
+	// serve a dashboard from. Name the command that opens one instead: the
+	// rollout ids a run generates are not knowable ahead of time, so the job id
+	// is the only way back to them.
+	monitorEndpoint := strings.TrimSpace(a.flags.endpoint)
+	if monitorEndpoint != "" {
+		monitorEndpoint = fmt.Sprintf(" --endpoint %s", monitorEndpoint)
+	}
+	if _, err := fmt.Fprintf(
+		a.cmd.OutOrStdout(),
+		"\nWatch this run's rollouts as they land:\n  azd ai rle monitor --job-id %s%s\n",
+		job.Id,
+		monitorEndpoint,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+// followJob mirrors the run's artifacts locally and serves its rollouts, until
+// the run finishes and the user stops watching.
+//
+// A streaming failure is reported but does not fail the command: the job was
+// accepted and is running on the service, and exiting non-zero would suggest it
+// was not. The job id is printed above, so it stays recoverable.
+func (a *trainAction) followJob(client *finetuneClient, jobID string) error {
+	authorization, err := client.authorizationHeader(a.cmd.Context())
+	if err != nil {
+		return fmt.Errorf("acquire a token for the run stream: %w", err)
+	}
+
+	logsRoot := strings.TrimSpace(a.flags.logsRoot)
+	if logsRoot == "" {
+		logsRoot = defaultLogsRoot()
+	}
+
+	// The dashboard runs alongside the stream rather than after it. A run
+	// records rollouts for as long as it lasts, and the point of following one
+	// is to watch them land, not to read them once it is over.
+	//
+	// It starts empty: the first rollout of a run takes minutes. The page polls,
+	// so rollouts appear as the run records them.
+	dashboard := make(chan struct{})
+	go func() {
+		defer close(dashboard)
+		source := &jobRollouts{client: client, jobID: jobID}
+		if err := runJobMonitor(
+			a.cmd.Context(), source, source, jobID, a.flags.noBrowser,
+			a.cmd.OutOrStdout(), a.cmd.ErrOrStderr(),
+		); err != nil {
+			// The stream is the part that must keep working; a dashboard that
+			// cannot start is worth saying once and no more.
+			fmt.Fprintf(a.cmd.ErrOrStderr(), "The rollout dashboard did not start: %v\n", err)
+		}
+	}()
+
+	status, streamErr := followTrainingRunFunc(
+		a.cmd.Context(),
+		client.baseUrl,
+		authorization,
+		jobID,
+		logsRoot,
+		a.cmd.OutOrStdout(),
+	)
+	if streamErr != nil {
+		fmt.Fprintf(a.cmd.ErrOrStderr(),
+			"\nStopped following %s: %v\nThe job is still running on the service; "+
+				"check it with: azd ai rle jobs\n", jobID, streamErr)
+	} else if status != "" {
+		fmt.Fprintf(a.cmd.OutOrStdout(), "Final status: %s\n", status)
+	}
+
+	// The run is over but its rollouts are not read yet. Hold the dashboard open
+	// until the user stops it, rather than closing the window they were sent to.
+	fmt.Fprintf(a.cmd.OutOrStdout(),
+		"\nThe rollout dashboard is still running. Press Ctrl+C to stop it.\n")
+	<-dashboard
 	return nil
 }
 

@@ -32,12 +32,49 @@ func Run(
 	if err != nil {
 		return err
 	}
+	return serve(ctx, source{snapshot: &snapshot}, noBrowser, out, errOut)
+}
+
+// RunJob serves every rollout a training run recorded, so one job opens as a
+// browsable set rather than requiring a rollout ID the caller cannot know.
+//
+// The index is read once, because a finished run does not gain rollouts. Each
+// rollout body is fetched only when opened: a run records thousands, and their
+// captured responses are far too large to hold at once.
+// RunJob serves the rollouts one training job recorded, so any of them can be opened.
+//
+// The run may still be going, so the list is not read once: jobIndex re-lists
+// from where it stopped, and the page polls for what has landed since.
+func RunJob(
+	ctx context.Context,
+	reader rollouts.Reader,
+	lister rollouts.Lister,
+	jobID string,
+	noBrowser bool,
+	out, errOut io.Writer,
+) error {
+	index := newJobIndex(jobID, lister)
+	if _, err := index.fetch(ctx); err != nil {
+		return err
+	}
+	return serve(ctx, source{jobID: jobID, index: index, reader: reader}, noBrowser, out, errOut)
+}
+
+// source is either one saved rollout or a training job's recorded set.
+type source struct {
+	snapshot *rollouts.Snapshot
+	jobID    string
+	index    *jobIndex
+	reader   rollouts.Reader
+}
+
+func serve(ctx context.Context, src source, noBrowser bool, out, errOut io.Writer) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("start rollout monitor: %w", err)
 	}
 	defer listener.Close()
-	handler, err := newHandler(snapshot, listener.Addr().String())
+	handler, err := newHandler(src, listener.Addr().String())
 	if err != nil {
 		return err
 	}
@@ -47,7 +84,13 @@ func Run(
 	defer func() { _ = server.Close() }()
 
 	link := "http://" + listener.Addr().String() + "/"
-	if _, err := fmt.Fprintf(out, "Rollout monitor: %s\nPress Ctrl+C to stop the local monitor.\n", link); err != nil {
+	heading := "Rollout monitor"
+	if src.jobID != "" {
+		// The count is where the list starts, not where it ends: a running job
+		// keeps recording, and the page picks the new ones up as they land.
+		heading = fmt.Sprintf("Rollout monitor for job %s (%d rollouts so far)", src.jobID, src.index.count())
+	}
+	if _, err := fmt.Fprintf(out, "%s: %s\nPress Ctrl+C to stop the local monitor.\n", heading, link); err != nil {
 		return err
 	}
 	if !noBrowser {
@@ -76,19 +119,80 @@ func Run(
 	}
 }
 
-func newHandler(snapshot rollouts.Snapshot, host string) (http.Handler, error) {
-	data, err := json.Marshal(snapshot)
-	if err != nil {
-		return nil, fmt.Errorf("encode rollout snapshot: %w", err)
+func newHandler(src source, host string) (http.Handler, error) {
+	var data []byte
+	if src.snapshot != nil {
+		encoded, err := json.Marshal(src.snapshot)
+		if err != nil {
+			return nil, fmt.Errorf("encode rollout snapshot: %w", err)
+		}
+		data = encoded
 	}
 	assets, err := fs.Sub(Assets, "web")
 	if err != nil {
 		return nil, fmt.Errorf("load monitor assets: %w", err)
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/rollout", func(w http.ResponseWriter, r *http.Request) {
+	// Absent in single-rollout mode; the page treats 404 as "there is no set to browse".
+	//
+	// The run may still be going, so this is answered from the live index rather
+	// than a list read at startup. `after` carries the last rollout the page
+	// already holds, so a poll returns only what has landed since.
+	mux.HandleFunc("GET /api/rollouts", func(w http.ResponseWriter, r *http.Request) {
+		if src.index == nil {
+			http.NotFound(w, r)
+			return
+		}
+		entries, reset := src.index.entriesAfter(r.Context(), r.URL.Query().Get("after"))
+		if entries == nil {
+			entries = []rollouts.Entry{}
+		}
+		body := map[string]any{"job_id": src.jobID, "data": entries}
+		if reset {
+			body["reset"] = true
+		}
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			http.Error(w, "could not encode rollout index", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(data)
+		_, _ = w.Write(encoded)
+	})
+
+	mux.HandleFunc("GET /api/rollout", func(w http.ResponseWriter, r *http.Request) {
+		requested := r.URL.Query().Get("id")
+		if requested == "" {
+			if data == nil {
+				http.Error(w, "a rollout id is required", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(data)
+			return
+		}
+		if src.reader == nil {
+			http.Error(w, "this monitor serves a single saved rollout", http.StatusNotFound)
+			return
+		}
+		// Serve only rollouts this job recorded, so the page cannot be used to
+		// fetch an arbitrary ID through the caller's credentials.
+		if src.index == nil || !src.index.contains(r.Context(), requested) {
+			http.Error(w, "unknown rollout", http.StatusNotFound)
+			return
+		}
+		snapshot, err := src.reader.Get(r.Context(), requested)
+		if err != nil {
+			http.Error(w, "could not load rollout: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		encoded, err := json.Marshal(snapshot)
+		if err != nil {
+			http.Error(w, "could not encode rollout", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(encoded)
 	})
 	files := http.FileServerFS(assets)
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {

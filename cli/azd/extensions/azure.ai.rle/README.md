@@ -594,6 +594,48 @@ The validation file is optional and follows the same local-file upload flow.
 Use `--endpoint` to target a different fine-tuning resource for a single
 invocation.
 
+`--follow` mirrors the run's artifacts to the local disk as they are written and
+waits for the job to finish:
+
+```powershell
+azd ai rle train ... --follow --logs-root $HOME/loom-runs
+```
+
+Files land in `<logs-root>/rle-harness/<job id>/`, which is the layout the Loom
+cookbook's `dashboard_server.py` discovers, so a followed run can be opened in
+the existing dashboard while it is still going:
+
+```bash
+python dashboard_server.py --root ~/loom-runs
+```
+
+`--logs-root` defaults to `$LOOM_LOGS_ROOT`, else `~/loom-runs`. Following is
+resumable: re-running `--follow` for the same job continues from the bytes
+already on disk. If the stream drops, `train` reports it but still exits zero --
+the job was accepted and is running on the service, and a non-zero exit would
+say otherwise.
+
+`--follow` also serves the rollout dashboard for the run it submitted, and
+prints its address:
+
+```text
+Rollout monitor for job ftjob-1234 (0 rollouts so far): http://127.0.0.1:41233/
+```
+
+It opens empty, because the first rollout of a run takes minutes. The page polls
+as the run records them, so rollouts appear without reloading, and any of them
+can be opened while the run continues. The dashboard stays up after the run
+finishes -- that is when its rollouts are finally all there to read -- so stop it
+with Ctrl+C. `--no-browser` prints the address without opening a browser.
+
+Without `--follow` the command exits as soon as the job is accepted, so there is
+nothing left to serve a dashboard from. It names the command that opens one
+instead:
+
+```text
+Watch this run's rollouts as they land:
+  azd ai rle monitor --job-id ftjob-1234
+```
 ### Training settings in `rle.toml`
 
 Everything above can be recorded in the environment's own `rle.toml`, so a run

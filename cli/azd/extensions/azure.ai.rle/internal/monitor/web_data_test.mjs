@@ -3,7 +3,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fetchSnapshot, mapSnapshot } from "./web/data.mjs";
+import {
+  fetchRolloutIndex, fetchSnapshot, mapSnapshot,
+} from "./web/data.mjs";
 
 const snapshot = (response = {}) => ({
   source: "Saved local result", saved_at: "2026-09-21T20:00:00Z",
@@ -206,3 +208,47 @@ test("handles HTTP, transport and invalid JSON failures without displaying respo
   })), /invalid JSON/);
 });
 
+
+test("requests a named rollout from the job's set", async () => {
+  const expected = snapshot();
+  const received = await fetchSnapshot(async (url) => {
+    assert.equal(url, "/api/rollout?id=abc%2Fdef");
+    return { ok: true, json: async () => expected };
+  }, "abc/def");
+  assert.equal(received, expected);
+});
+
+test("reads a missing index as a single saved rollout rather than an error", async () => {
+  assert.equal(await fetchRolloutIndex(async () => ({ ok: false, status: 404 })), null);
+});
+
+test("returns the recorded index for a training job", async () => {
+  const expected = { job_id: "ftjob-1", data: [{ rollout_id: "a" }] };
+  const received = await fetchRolloutIndex(async (url, options) => {
+    assert.equal(url, "/api/rollouts");
+    assert.equal(options.credentials, "same-origin");
+    assert.equal(options.cache, "no-store");
+    return { ok: true, json: async () => expected };
+  });
+  assert.equal(received, expected);
+});
+
+test("index transport and HTTP failures stay distinguishable", async () => {
+  await assert.rejects(fetchRolloutIndex(async () => ({ ok: false, status: 500 })), /HTTP 500/);
+  await assert.rejects(fetchRolloutIndex(async () => { throw new Error("sensitive"); }), /Could not reach/);
+});
+
+test("polls from the last rollout it holds, so a poll costs only what is new", async () => {
+  const received = await fetchRolloutIndex(async (url) => {
+    assert.equal(url, "/api/rollouts?after=rollout-9");
+    return { ok: true, json: async () => ({ job_id: "ftjob-1", data: [] }) };
+  }, "rollout-9");
+  assert.deepEqual(received.data, []);
+});
+
+test("a rollout id is escaped into the poll query rather than concatenated", async () => {
+  await fetchRolloutIndex(async (url) => {
+    assert.equal(url, "/api/rollouts?after=a%26b%3Dc");
+    return { ok: true, json: async () => ({ job_id: "ftjob-1", data: [] }) };
+  }, "a&b=c");
+});
