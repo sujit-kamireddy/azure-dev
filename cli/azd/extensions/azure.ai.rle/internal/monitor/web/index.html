@@ -27,7 +27,31 @@
       <p id="error-message" role="alert"></p>
       <button id="retry" type="button">Try again</button>
     </section>
+    <section id="rollout-list" class="panel" aria-labelledby="rollout-list-title" hidden>
+      <div class="list-heading">
+        <div>
+          <h2 id="rollout-list-title">Rollouts</h2>
+          <p class="muted"><span class="muted">JOB</span> <code id="list-job-id"></code> <span id="list-count"></span></p>
+        </div>
+        <div class="list-filters">
+          <label for="list-split">Split</label>
+          <select id="list-split"><option value="">All</option></select>
+          <label for="list-step">Step</label>
+          <select id="list-step"><option value="">All</option></select>
+        </div>
+      </div>
+      <p id="list-empty" class="notice" hidden>This job has not recorded any rollouts yet.</p>
+      <div class="list-scroll"><table id="list-table" class="rollout-table">
+        <thead><tr>
+          <th scope="col">#</th><th scope="col">Rollout</th><th scope="col">Split</th>
+          <th scope="col">Step</th><th scope="col">Reward</th><th scope="col">Outcome</th>
+          <th scope="col">Latency</th><th scope="col">Task</th>
+        </tr></thead>
+        <tbody id="list-body"></tbody>
+      </table></div>
+    </section>
     <div id="snapshot" hidden>
+      <p id="back-to-list" class="section-block" hidden><button id="back-button" type="button">&#8592; All rollouts</button></p>
       <section class="snapshot-meta" aria-label="Rollout summary">
         <div class="summary-main">
           <div class="compact-heading">

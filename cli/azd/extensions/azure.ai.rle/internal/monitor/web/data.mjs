@@ -356,10 +356,11 @@ export function sequencePage(data, page = 0, size = TOKEN_PAGE_SIZE, filter = "a
   return { rows, page: currentPage, pageCount, start, end, total };
 }
 
-export async function fetchSnapshot(fetcher = fetch) {
+export async function fetchSnapshot(fetcher = fetch, rolloutID = "") {
   let result;
+  const path = rolloutID ? `/api/rollout?id=${encodeURIComponent(rolloutID)}` : "/api/rollout";
   try {
-    result = await fetcher("/api/rollout", { credentials: "same-origin", cache: "no-store",
+    result = await fetcher(path, { credentials: "same-origin", cache: "no-store",
       headers: { Accept: "application/json" } });
   } catch {
     throw new Error("Could not reach the local monitor. Check that the monitor command is still running, then try again.");
@@ -371,5 +372,25 @@ export async function fetchSnapshot(fetcher = fetch) {
     return await result.json();
   } catch {
     throw new Error("The local monitor returned invalid JSON. Check the saved execution response.");
+  }
+}
+
+// Returns null when the monitor serves a single saved rollout and has no set to browse.
+export async function fetchRolloutIndex(fetcher = fetch) {
+  let result;
+  try {
+    result = await fetcher("/api/rollouts", { credentials: "same-origin", cache: "no-store",
+      headers: { Accept: "application/json" } });
+  } catch {
+    throw new Error("Could not reach the local monitor. Check that the monitor command is still running, then try again.");
+  }
+  if (result.status === 404) return null;
+  if (!result.ok) {
+    throw new Error(`The local monitor returned HTTP ${result.status}. Check the monitor terminal, then try again.`);
+  }
+  try {
+    return await result.json();
+  } catch {
+    throw new Error("The local monitor returned invalid JSON. Check the monitor terminal, then try again.");
   }
 }

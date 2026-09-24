@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"slices"
 	"time"
 
 	"azure.ai.rle/internal/rollouts"
@@ -32,12 +33,45 @@ func Run(
 	if err != nil {
 		return err
 	}
+	return serve(ctx, source{snapshot: &snapshot}, noBrowser, out, errOut)
+}
+
+// RunJob serves every rollout a training run recorded, so one job opens as a
+// browsable set rather than requiring a rollout ID the caller cannot know.
+//
+// The index is read once, because a finished run does not gain rollouts. Each
+// rollout body is fetched only when opened: a run records thousands, and their
+// captured responses are far too large to hold at once.
+func RunJob(
+	ctx context.Context,
+	reader rollouts.Reader,
+	lister rollouts.Lister,
+	jobID string,
+	noBrowser bool,
+	out, errOut io.Writer,
+) error {
+	entries, err := lister.List(ctx)
+	if err != nil {
+		return err
+	}
+	return serve(ctx, source{jobID: jobID, entries: entries, reader: reader}, noBrowser, out, errOut)
+}
+
+// source is either one saved rollout or a training job's recorded set.
+type source struct {
+	snapshot *rollouts.Snapshot
+	jobID    string
+	entries  []rollouts.Entry
+	reader   rollouts.Reader
+}
+
+func serve(ctx context.Context, src source, noBrowser bool, out, errOut io.Writer) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("start rollout monitor: %w", err)
 	}
 	defer listener.Close()
-	handler, err := newHandler(snapshot, listener.Addr().String())
+	handler, err := newHandler(src, listener.Addr().String())
 	if err != nil {
 		return err
 	}
@@ -47,7 +81,11 @@ func Run(
 	defer func() { _ = server.Close() }()
 
 	link := "http://" + listener.Addr().String() + "/"
-	if _, err := fmt.Fprintf(out, "Rollout monitor: %s\nPress Ctrl+C to stop the local monitor.\n", link); err != nil {
+	heading := "Rollout monitor"
+	if src.jobID != "" {
+		heading = fmt.Sprintf("Rollout monitor for job %s (%d rollouts)", src.jobID, len(src.entries))
+	}
+	if _, err := fmt.Fprintf(out, "%s: %s\nPress Ctrl+C to stop the local monitor.\n", heading, link); err != nil {
 		return err
 	}
 	if !noBrowser {
@@ -76,19 +114,74 @@ func Run(
 	}
 }
 
-func newHandler(snapshot rollouts.Snapshot, host string) (http.Handler, error) {
-	data, err := json.Marshal(snapshot)
-	if err != nil {
-		return nil, fmt.Errorf("encode rollout snapshot: %w", err)
+func newHandler(src source, host string) (http.Handler, error) {
+	var data []byte
+	if src.snapshot != nil {
+		encoded, err := json.Marshal(src.snapshot)
+		if err != nil {
+			return nil, fmt.Errorf("encode rollout snapshot: %w", err)
+		}
+		data = encoded
+	}
+	var index []byte
+	if src.jobID != "" {
+		entries := src.entries
+		if entries == nil {
+			entries = []rollouts.Entry{}
+		}
+		encoded, err := json.Marshal(map[string]any{"job_id": src.jobID, "data": entries})
+		if err != nil {
+			return nil, fmt.Errorf("encode rollout index: %w", err)
+		}
+		index = encoded
 	}
 	assets, err := fs.Sub(Assets, "web")
 	if err != nil {
 		return nil, fmt.Errorf("load monitor assets: %w", err)
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/rollout", func(w http.ResponseWriter, r *http.Request) {
+	// Absent in single-rollout mode; the page treats 404 as "there is no set to browse".
+	mux.HandleFunc("GET /api/rollouts", func(w http.ResponseWriter, r *http.Request) {
+		if index == nil {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(data)
+		_, _ = w.Write(index)
+	})
+	mux.HandleFunc("GET /api/rollout", func(w http.ResponseWriter, r *http.Request) {
+		requested := r.URL.Query().Get("id")
+		if requested == "" {
+			if data == nil {
+				http.Error(w, "a rollout id is required", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(data)
+			return
+		}
+		if src.reader == nil {
+			http.Error(w, "this monitor serves a single saved rollout", http.StatusNotFound)
+			return
+		}
+		// Serve only rollouts this job recorded, so the page cannot be used to
+		// fetch an arbitrary ID through the caller's credentials.
+		if !slices.ContainsFunc(src.entries, func(e rollouts.Entry) bool { return e.RolloutID == requested }) {
+			http.Error(w, "unknown rollout", http.StatusNotFound)
+			return
+		}
+		snapshot, err := src.reader.Get(r.Context(), requested)
+		if err != nil {
+			http.Error(w, "could not load rollout: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		encoded, err := json.Marshal(snapshot)
+		if err != nil {
+			http.Error(w, "could not encode rollout", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(encoded)
 	})
 	files := http.FileServerFS(assets)
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {

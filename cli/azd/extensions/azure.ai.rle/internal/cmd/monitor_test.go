@@ -114,11 +114,11 @@ func TestMonitorRolloutIDValidation(t *testing.T) {
 		code    string
 		message string
 	}{
-		{"omitted", nil, "rle_monitor_rollout_id_required", "--rollout-id is required but was not provided."},
+		{"omitted", nil, "rle_monitor_rollout_id_required", "--rollout-id or --job-id is required but neither was provided."},
 		{"empty", []string{"--rollout-id="},
-			"rle_monitor_rollout_id_required", "--rollout-id is required but was not provided."},
+			"rle_monitor_rollout_id_required", "--rollout-id or --job-id is required but neither was provided."},
 		{"whitespace", []string{"--rollout-id", " \t "},
-			"rle_monitor_rollout_id_required", "--rollout-id is required but was not provided."},
+			"rle_monitor_rollout_id_required", "--rollout-id or --job-id is required but neither was provided."},
 		{"malformed", []string{"--rollout-id", "../outside"},
 			"rle_invalid_rollout_id", "rollout ID must be 32 lowercase hexadecimal characters"},
 	} {

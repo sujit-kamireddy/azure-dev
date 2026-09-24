@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,7 @@ func TestHandlerAuthorizationAndRoutes(t *testing.T) {
 		Response: json.RawMessage(`{"rollout_id":"abc","reward":1,"result":"<script>alert(1)</script>"}`),
 		Source:   "Saved local result",
 	}
-	handler, err := newHandler(snapshot, testHost)
+	handler, err := newHandler(source{snapshot: &snapshot}, testHost)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestHandlerAuthorizationAndRoutes(t *testing.T) {
 }
 
 func TestModuleAssetsUseJavaScriptMIMEType(t *testing.T) {
-	handler, err := newHandler(rollouts.Snapshot{Response: json.RawMessage(`{}`)}, testHost)
+	handler, err := newHandler(source{snapshot: &rollouts.Snapshot{Response: json.RawMessage(`{}`)}}, testHost)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,5 +172,121 @@ func TestRunServesAndStops(t *testing.T) {
 				t.Fatal("browser failure was not reported")
 			}
 		})
+	}
+}
+
+type stubJobSource struct {
+	entries  []rollouts.Entry
+	requests []string
+	err      error
+}
+
+func (s *stubJobSource) List(context.Context) ([]rollouts.Entry, error) { return s.entries, s.err }
+
+func (s *stubJobSource) Get(_ context.Context, rolloutID string) (rollouts.Snapshot, error) {
+	s.requests = append(s.requests, rolloutID)
+	if s.err != nil {
+		return rollouts.Snapshot{}, s.err
+	}
+	return rollouts.Snapshot{
+		Response: json.RawMessage(`{"rollout_id":"` + rolloutID + `","reward":1}`),
+		Source:   "Training run artifacts",
+	}, nil
+}
+
+func jobHandler(t *testing.T, stub *stubJobSource) http.Handler {
+	t.Helper()
+	handler, err := newHandler(source{jobID: "ftjob-1", entries: stub.entries, reader: stub}, testHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler
+}
+
+func jobRequest(t *testing.T, handler http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest("GET", "http://"+testHost+path, nil)
+	request.Host = testHost
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func TestJobModeListsAndFetchesOnDemand(t *testing.T) {
+	success := true
+	reward := 0.75
+	stub := &stubJobSource{entries: []rollouts.Entry{
+		{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Sequence: 1, Split: "validation",
+			Reward: &reward, Success: &success},
+		{RolloutID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Sequence: 2, Split: "train"},
+	}}
+	handler := jobHandler(t, stub)
+
+	index := jobRequest(t, handler, "/api/rollouts")
+	if index.Code != 200 {
+		t.Fatalf("list status = %d, want 200", index.Code)
+	}
+	var listed struct {
+		JobID string           `json:"job_id"`
+		Data  []rollouts.Entry `json:"data"`
+	}
+	if err := json.Unmarshal(index.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.JobID != "ftjob-1" || len(listed.Data) != 2 {
+		t.Fatalf("list = %+v, want job ftjob-1 with 2 entries", listed)
+	}
+	// The index must stay a summary: a run records thousands of large responses.
+	if len(stub.requests) != 0 {
+		t.Fatalf("listing fetched %v, want no rollout bodies", stub.requests)
+	}
+
+	body := jobRequest(t, handler, "/api/rollout?id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if body.Code != 200 {
+		t.Fatalf("fetch status = %d, want 200", body.Code)
+	}
+	if len(stub.requests) != 1 || stub.requests[0] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("fetched %v, want the opened rollout only", stub.requests)
+	}
+}
+
+func TestJobModeRejectsRolloutsOutsideTheJob(t *testing.T) {
+	stub := &stubJobSource{entries: []rollouts.Entry{{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+	handler := jobHandler(t, stub)
+	response := jobRequest(t, handler, "/api/rollout?id=cccccccccccccccccccccccccccccccc")
+	if response.Code != 404 {
+		t.Fatalf("status = %d, want 404 for a rollout this job did not record", response.Code)
+	}
+	if len(stub.requests) != 0 {
+		t.Fatalf("fetched %v, want no call for an unlisted rollout", stub.requests)
+	}
+}
+
+func TestJobModeRequiresAnID(t *testing.T) {
+	handler := jobHandler(t, &stubJobSource{entries: []rollouts.Entry{}})
+	if response := jobRequest(t, handler, "/api/rollout"); response.Code != 400 {
+		t.Fatalf("status = %d, want 400 when no rollout is named", response.Code)
+	}
+}
+
+func TestSingleRolloutModeHasNoIndex(t *testing.T) {
+	handler, err := newHandler(source{snapshot: &rollouts.Snapshot{Response: json.RawMessage(`{}`)}}, testHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The page reads 404 as "there is no set to browse" and shows the saved rollout.
+	if response := jobRequest(t, handler, "/api/rollouts"); response.Code != 404 {
+		t.Fatalf("status = %d, want 404 without a job", response.Code)
+	}
+	if response := jobRequest(t, handler, "/api/rollout"); response.Code != 200 {
+		t.Fatalf("status = %d, want the saved rollout", response.Code)
+	}
+}
+
+func TestRunJobSurfacesListFailure(t *testing.T) {
+	stub := &stubJobSource{err: errors.New("service unavailable")}
+	err := RunJob(context.Background(), stub, stub, "ftjob-1", true, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "service unavailable") {
+		t.Fatalf("err = %v, want the listing failure", err)
 	}
 }
