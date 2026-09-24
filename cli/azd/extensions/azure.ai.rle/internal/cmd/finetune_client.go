@@ -55,6 +55,10 @@ type finetuneRleEnvironmentConfig struct {
 	Name            string `json:"name"`
 	Version         string `json:"version"`
 	MaxEpisodeSteps *int   `json:"max_episode_steps,omitempty"`
+
+	// Training options for the run. The service owns the vocabulary and validates
+	// per recipe, so these are forwarded as given rather than typed here.
+	Hyperparameters map[string]any `json:"hyperparameters,omitempty"`
 }
 
 type finetuneMethodRequest struct {

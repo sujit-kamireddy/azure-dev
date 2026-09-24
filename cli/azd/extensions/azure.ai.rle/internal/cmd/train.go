@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"azure.ai.rle/internal/project"
@@ -23,7 +24,11 @@ type rleTrainFlags struct {
 	validationFile  string
 	suffix          string
 	maxEpisodeSteps int
+	taskCount       int
 	endpoint        string
+
+	// Where the merged settings came from, for the line printed before submitting.
+	optionsSource string
 }
 
 type trainAction struct {
@@ -62,53 +67,132 @@ FOUNDRY_PROJECT_ENDPOINT.`,
 		"Name of the published RLE environment to train against. Defaults to rle.name in ./rle.toml.")
 	cmd.Flags().StringVar(&flags.rleVersion, "rle-version", "",
 		"Version of the published RLE environment. Defaults to rle.version in ./rle.toml.")
-	cmd.Flags().StringVar(&flags.model, "model", "", "Base model id to fine-tune.")
+	cmd.Flags().StringVar(&flags.model, "model", "", "Base model id to fine-tune. Defaults to train.model in ./rle.toml.")
 	cmd.Flags().StringVar(&flags.trainingFile, "training-file", "",
-		"Path to the local training dataset uploaded as the Loom job input.")
+		"Path to the local training dataset uploaded as the Loom job input. "+
+			"Defaults to train.training_file in ./rle.toml.")
 	cmd.Flags().StringVar(&flags.validationFile, "validation-file", "",
-		"Path to a local validation dataset to upload.")
-	cmd.Flags().StringVar(&flags.suffix, "suffix", "", "Suffix appended to the resulting fine-tuned model name.")
+		"Path to a local validation dataset to upload. Defaults to train.validation_file in ./rle.toml.")
+	cmd.Flags().StringVar(&flags.suffix, "suffix", "",
+		"Suffix appended to the resulting fine-tuned model name. Defaults to train.suffix in ./rle.toml.")
 	cmd.Flags().IntVar(&flags.maxEpisodeSteps, "max-episode-steps", 0,
 		"Maximum steps the RLE executes per rollout (0 uses the service default).")
+	cmd.Flags().IntVar(&flags.taskCount, "task-count", 0,
+		"Train on only the first N tasks of the training dataset, for a smaller run. "+
+			"Sets the max_train_examples training option (0 uses the whole dataset).")
 	cmd.Flags().StringVar(&flags.endpoint, "endpoint", "",
 		fmt.Sprintf("Fine-tuning API endpoint. Defaults to the account in %s.", foundryProjectEndpointEnvVar))
 
-	for _, name := range []string{"model", "training-file"} {
-		_ = cmd.MarkFlagRequired(name)
-	}
+	// model and training-file are not marked required: rle.toml can supply either,
+	// and cobra would reject the run before the manifest is ever read.
 
 	return cmd
 }
 
-// resolveTrainTarget fills in the RLE name and version from rle.toml in the current
-// folder whenever either is omitted, so train can be run from an environment folder
-// the same way rollout can.
-func (a *trainAction) resolveTrainTarget() error {
+// resolveTrainSettings fills in everything train can take from rle.toml in the
+// current folder: the RLE name and version, and the [train] section's model,
+// dataset paths, suffix and options. Flags win over the manifest, so a saved
+// configuration stays overridable for one run without editing it.
+//
+// The manifest is optional. It is only required when a flag left something
+// unresolved, so `train --rle-name ... --model ... --training-file ...` still
+// works from a folder that has no rle.toml.
+func (a *trainAction) resolveTrainSettings() (map[string]any, error) {
 	name := strings.TrimSpace(a.flags.rleName)
 	version := strings.TrimSpace(a.flags.rleVersion)
-	if name == "" || version == "" {
-		config, err := project.LoadRleConfig(".")
-		if err != nil {
-			return err
-		}
+	model := strings.TrimSpace(a.flags.model)
+	trainingFile := strings.TrimSpace(a.flags.trainingFile)
+	validationFile := strings.TrimSpace(a.flags.validationFile)
+	suffix := strings.TrimSpace(a.flags.suffix)
+
+	options := map[string]any{}
+	config, configErr := project.LoadRleConfig(".")
+	if configErr == nil {
 		if name == "" {
 			name = config.Rle.Name
 		}
 		if version == "" {
 			version = config.Rle.Version
 		}
+		if train := config.Train; train != nil {
+			if model == "" && train.Model != nil {
+				model = strings.TrimSpace(*train.Model)
+			}
+			if trainingFile == "" && train.TrainingFile != nil {
+				trainingFile = strings.TrimSpace(*train.TrainingFile)
+			}
+			if validationFile == "" && train.ValidationFile != nil {
+				validationFile = strings.TrimSpace(*train.ValidationFile)
+			}
+			if suffix == "" && train.Suffix != nil {
+				suffix = strings.TrimSpace(*train.Suffix)
+			}
+			if a.flags.maxEpisodeSteps == 0 && train.MaxEpisodeSteps != nil {
+				a.flags.maxEpisodeSteps = *train.MaxEpisodeSteps
+			}
+			for optionName, value := range train.Options {
+				options[optionName] = value
+			}
+			if len(options) > 0 {
+				a.flags.optionsSource = project.RleConfigFile
+			}
+		}
+	} else if name == "" || version == "" {
+		// Only the environment identity structurally needs the manifest. A missing
+		// model or dataset is reported by name below, which is more useful than
+		// naming a file the caller may not have intended to use.
+		return nil, configErr
 	}
+
+	// --task-count is shorthand for one training option, so it is applied the way
+	// any other flag overrides the manifest rather than being sent separately.
+	if a.flags.taskCount > 0 {
+		options[trainTaskCountOption] = a.flags.taskCount
+		if a.flags.optionsSource == "" {
+			a.flags.optionsSource = "--task-count"
+		} else {
+			a.flags.optionsSource = project.RleConfigFile + " and --task-count"
+		}
+	}
+
+	if model == "" {
+		return nil, missingTrainSettingError("model", "--model", "train.model")
+	}
+	if trainingFile == "" {
+		return nil, missingTrainSettingError("training file", "--training-file", "train.training_file")
+	}
+
 	normalized, err := project.NormalizeRleVersion(version)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	a.flags.rleName = name
 	a.flags.rleVersion = normalized
-	return nil
+	a.flags.model = model
+	a.flags.trainingFile = trainingFile
+	a.flags.validationFile = validationFile
+	a.flags.suffix = suffix
+	return options, nil
+}
+
+// trainTaskCountOption is the training option --task-count sets. The service
+// applies it as the dataset limit for the run; the CLI only forwards it.
+const trainTaskCountOption = "max_train_examples"
+
+func missingTrainSettingError(what string, flag string, manifestKey string) error {
+	return &azdext.LocalError{
+		Message:  fmt.Sprintf("A %s is required for train.", what),
+		Code:     "rle_train_setting_required",
+		Category: azdext.LocalErrorCategoryUser,
+		Suggestion: fmt.Sprintf(
+			"Pass %s, or set %s in %s.", flag, manifestKey, project.RleConfigFile,
+		),
+	}
 }
 
 func (a *trainAction) Run() error {
-	if err := a.resolveTrainTarget(); err != nil {
+	trainingOptions, err := a.resolveTrainSettings()
+	if err != nil {
 		return err
 	}
 
@@ -162,7 +246,7 @@ func (a *trainAction) Run() error {
 		}
 	}
 
-	request := buildFinetuneJobRequest(a.flags, trainingFileID, validationFileID)
+	request := buildFinetuneJobRequest(a.flags, trainingFileID, validationFileID, trainingOptions)
 
 	if _, err := fmt.Fprintf(
 		a.cmd.OutOrStdout(),
@@ -172,6 +256,23 @@ func (a *trainAction) Run() error {
 		a.flags.model,
 	); err != nil {
 		return err
+	}
+
+	if len(trainingOptions) > 0 {
+		names := make([]string, 0, len(trainingOptions))
+		for name := range trainingOptions {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		if _, err := fmt.Fprintf(
+			a.cmd.OutOrStdout(),
+			"Applying %d training option(s) from %s: %s\n",
+			len(names),
+			a.flags.optionsSource,
+			strings.Join(names, ", "),
+		); err != nil {
+			return err
+		}
 	}
 
 	job, err := client.createJob(a.cmd.Context(), request, azureAIProject)
@@ -195,6 +296,7 @@ func (a *trainAction) Run() error {
 	if _, err := fmt.Fprintln(a.cmd.OutOrStdout(), string(body)); err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -252,6 +354,7 @@ func buildFinetuneJobRequest(
 	flags *rleTrainFlags,
 	trainingFileID string,
 	validationFileID string,
+	options map[string]any,
 ) finetuneJobCreationRequest {
 	rleEnvironment := finetuneRleEnvironmentConfig{
 		Name:    flags.rleName,
@@ -260,6 +363,9 @@ func buildFinetuneJobRequest(
 	if flags.maxEpisodeSteps > 0 {
 		steps := flags.maxEpisodeSteps
 		rleEnvironment.MaxEpisodeSteps = &steps
+	}
+	if len(options) > 0 {
+		rleEnvironment.Hyperparameters = options
 	}
 
 	request := finetuneJobCreationRequest{

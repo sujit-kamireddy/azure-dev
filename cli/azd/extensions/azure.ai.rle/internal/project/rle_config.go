@@ -50,6 +50,7 @@ type RleConfig struct {
 	SchemaVersion *string                 `toml:"schema_version,omitempty"`
 	Rle           RleManifest             `toml:"rle"`
 	Defaults      *RleEnvironmentDefaults `toml:"defaults,omitempty"`
+	Train         *RleTrainSettings       `toml:"train,omitempty"`
 }
 
 // RleManifest uses the control-plane field names so the [rle] table maps directly to an RLE release.
@@ -69,6 +70,27 @@ type RleEnvironmentDefaults struct {
 	Reinforcement *RleReinforcementDefaults `toml:"reinforcement,omitempty" json:"reinforcement,omitempty"`
 	Grpo          *RleGrpoDefaults          `toml:"grpo,omitempty" json:"grpo,omitempty"`
 	GymOpenEnv    *RleGymOpenEnvDefaults    `toml:"gym_openenv,omitempty" json:"gym_openenv,omitempty"`
+}
+
+// RleTrainSettings records how this environment is usually trained, so that a run
+// is `azd ai rle train` rather than a line of flags nobody remembers.
+//
+// This is deliberately separate from Defaults. Defaults describes the published
+// environment version -- publish sends it to the service and rejects a local copy
+// that has drifted -- and versions are immutable, so a value that changes from run
+// to run cannot live there. These settings are local, are never published, and are
+// free to change without republishing.
+//
+// Options is left opaque. The service owns the option vocabulary and validates it
+// per recipe, naming the offending field and the supported set; duplicating that
+// list here would only add a second place to be out of date.
+type RleTrainSettings struct {
+	Model           *string        `toml:"model,omitempty" json:"model,omitempty"`
+	TrainingFile    *string        `toml:"training_file,omitempty" json:"training_file,omitempty"`
+	ValidationFile  *string        `toml:"validation_file,omitempty" json:"validation_file,omitempty"`
+	Suffix          *string        `toml:"suffix,omitempty" json:"suffix,omitempty"`
+	MaxEpisodeSteps *int           `toml:"max_episode_steps,omitempty" json:"max_episode_steps,omitempty"`
+	Options         map[string]any `toml:"options,omitempty" json:"options,omitempty"`
 }
 
 // RleModelDefaults contains the optional model and renderer selection.
