@@ -67,6 +67,78 @@ func TestReadJSONFlagOrFileRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestRolloutRunDefaultsAgentInputToTaskWhenUnset(t *testing.T) {
+	isolateRolloutArtifacts(t)
+	stubRolloutMonitor(t)
+	const task = `{"task_index":30,"split":"FineEnvs/data-agent-harbor-train"}`
+
+	rleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawBody, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var request executeRolloutRequest
+		if err := json.Unmarshal(rawBody, &request); err != nil {
+			t.Fatal(err)
+		}
+		if string(request.Task) != task {
+			t.Fatalf("expected task to be forwarded unchanged, got %s", request.Task)
+		}
+		if string(request.AgentInput) != task {
+			t.Fatalf("expected agent input to default to task, got %s", request.AgentInput)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"rollout_id": "` + request.RolloutID + `",
+			"reward": 1,
+			"success": true,
+			"episode": {"kind": "gym", "termination_reason": "done", "steps": []}
+		}`))
+	}))
+	defer rleServer.Close()
+
+	loomServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == loomSessionsPath:
+			_, _ = w.Write([]byte(`{"session_id":"model_abc","request_id":"req-create"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/checkpoint_sample"):
+			_, _ = w.Write([]byte(`{"session_id":"model_abc","request_id":"req-checkpoint"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/complete"):
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/request/"):
+			_, _ = w.Write([]byte(`{"status":"completed"}`))
+		default:
+			t.Fatalf("unexpected Loom request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer loomServer.Close()
+
+	stubRleClientEndpoint(t, rleServer.URL)
+	oldCreateLoomSessionClient := createLoomSessionClient
+	createLoomSessionClient = func(endpoint string) (*loomSessionClient, error) {
+		return testLoomSessionClientForServer(t, loomServer.URL), nil
+	}
+	t.Cleanup(func() {
+		createLoomSessionClient = oldCreateLoomSessionClient
+	})
+
+	command := newRolloutCommand()
+	command.SetArgs([]string{
+		"code_rl", "--version", "1.0.0",
+		"--model", "Qwen/Qwen3-32B",
+		"--task", task,
+		"--output-dir", t.TempDir(),
+	})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&output)
+
+	if err := command.Execute(); err != nil {
+		t.Fatalf("expected rollout to succeed, got %v", err)
+	}
+}
+
 func TestNewRolloutIDReturnsUniqueHexValues(t *testing.T) {
 	first, err := newRolloutID()
 	if err != nil {

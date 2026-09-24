@@ -434,7 +434,9 @@ RLE's Execute Rollout API with your `--task` (and, for Harness targets,
 `--agent-input`), prints the resulting reward and trajectory summary, then
 closes the Loom session — you never handle Loom session or checkpoint
 identifiers directly. Use `--task`/`--task-file` for the sandbox reset payload
-(Gym/OpenEnv), `--agent-input`/`--agent-input-file` for Harness targets.
+(Gym/OpenEnv), `--agent-input`/`--agent-input-file` for Harness targets. When
+`--agent-input`/`--agent-input-file` is omitted, the task payload is reused as
+the agent input.
 `--lora-rank` (default `16`), `--rollout-id` (default: a generated GUID),
 `--sequence-id` (default `0`, only meaningful when correlating a rollout to a
 specific training step in a real training loop), and `--timeout` (default

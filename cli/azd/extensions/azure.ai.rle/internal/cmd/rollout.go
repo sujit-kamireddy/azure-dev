@@ -110,7 +110,7 @@ rle.toml. To run an environment without local source, provide both its name and
 		&flags.agentInput,
 		"agent-input",
 		"",
-		"Inline JSON agent input (Harness targets only).",
+		"Inline JSON agent input (Harness targets only). Defaults to --task/--task-file when omitted.",
 	)
 	cmd.Flags().StringVar(
 		&flags.agentInputFile,
@@ -180,6 +180,9 @@ func (a *rolloutAction) Run() error {
 	agentInput, err := readJSONFlagOrFile("--agent-input", a.flags.agentInput, "--agent-input-file", a.flags.agentInputFile)
 	if err != nil {
 		return err
+	}
+	if agentInput == nil {
+		agentInput = task
 	}
 
 	rolloutID := strings.TrimSpace(a.flags.rolloutID)
