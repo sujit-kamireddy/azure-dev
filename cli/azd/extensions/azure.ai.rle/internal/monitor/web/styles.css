@@ -418,3 +418,44 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 :where([data-theme="dark"]) .rollout-table thead th { background: #1d2842; color: #9fb0d0; }
 :where([data-theme="dark"]) .rollout-table tbody tr:nth-child(even) { background: #18223a; }
 :where([data-theme="dark"]) .rollout-table tbody tr:hover { background: #1f2c4a; }
+
+/* Training run view -------------------------------------------------------- */
+#run-overview { margin-bottom: 20px; }
+.metric-delta { font-size: 12px; font-weight: 600; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.metric-delta.rising { color: #1d6a51; }
+.metric-delta.falling { color: #974920; }
+.run-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0 28px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.fact-group .field-list { grid-template-columns: minmax(90px, 1fr) minmax(0, 1fr); gap: 7px 14px; margin: 0; }
+.fact-group dd { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.run-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 20px; }
+.run-chart { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; background: #fcfdff; min-width: 0; }
+.run-chart h3 { font-size: 14px; font-weight: 650; }
+.run-chart .section-note { font-size: 12px; margin-top: 9px; line-height: 1.55; }
+.run-chart-plot { display: block; width: 100%; height: 150px; margin-top: 8px; overflow: visible; }
+.chart-line { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.chart-dot { stroke: var(--surface); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-zero { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.chart-axis { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.legend-series { display: inline-flex; align-items: center; gap: 6px; }
+.legend-swatch { width: 11px; height: 3px; border-radius: 2px; }
+.tone-primary .legend-swatch { background: #365edb; }
+.tone-accent .legend-swatch { background: #8a5cd0; }
+.tone-positive .legend-swatch { background: #1d8a63; }
+.tone-negative .legend-swatch { background: #c2511f; }
+path.tone-primary { stroke: #365edb; } circle.tone-primary { fill: #365edb; }
+path.tone-accent { stroke: #8a5cd0; } circle.tone-accent { fill: #8a5cd0; }
+path.tone-positive { stroke: #1d8a63; } circle.tone-positive { fill: #1d8a63; }
+path.tone-negative { stroke: #c2511f; } circle.tone-negative { fill: #c2511f; }
+.run-log { max-height: 420px; overflow: auto; margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+:where([data-theme="dark"]) .run-chart { background: #16202f; }
+:where([data-theme="dark"]) .metric-delta.rising { color: #98e2c5; }
+:where([data-theme="dark"]) .metric-delta.falling { color: #f1c29b; }
+:where([data-theme="dark"]) .tone-primary .legend-swatch { background: #7ca0ff; }
+:where([data-theme="dark"]) .tone-accent .legend-swatch { background: #c2a0f2; }
+:where([data-theme="dark"]) .tone-positive .legend-swatch { background: #6fd5b3; }
+:where([data-theme="dark"]) .tone-negative .legend-swatch { background: #f0a276; }
+:where([data-theme="dark"]) path.tone-primary { stroke: #7ca0ff; } :where([data-theme="dark"]) circle.tone-primary { fill: #7ca0ff; }
+:where([data-theme="dark"]) path.tone-accent { stroke: #c2a0f2; } :where([data-theme="dark"]) circle.tone-accent { fill: #c2a0f2; }
+:where([data-theme="dark"]) path.tone-positive { stroke: #6fd5b3; } :where([data-theme="dark"]) circle.tone-positive { fill: #6fd5b3; }
+:where([data-theme="dark"]) path.tone-negative { stroke: #f0a276; } :where([data-theme="dark"]) circle.tone-negative { fill: #f0a276; }

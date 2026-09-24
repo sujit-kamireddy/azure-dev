@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"strings"
 	"time"
 
 	"azure.ai.rle/internal/rollouts"
@@ -45,11 +46,17 @@ func Run(
 //
 // The run may still be going, so the list is not read once: jobIndex re-lists
 // from where it stopped, and the page polls for what has landed since.
+//
+// runDir is the local mirror `train --follow` writes (empty when there is
+// none). When present the dashboard also shows what the job is -- its model,
+// environment, hyperparameters, metrics and log -- instead of only the rollouts
+// it has produced so far.
 func RunJob(
 	ctx context.Context,
 	reader rollouts.Reader,
 	lister rollouts.Lister,
 	jobID string,
+	runDir string,
 	noBrowser bool,
 	out, errOut io.Writer,
 ) error {
@@ -57,7 +64,11 @@ func RunJob(
 	if _, err := index.fetch(ctx); err != nil {
 		return err
 	}
-	return serve(ctx, source{jobID: jobID, index: index, reader: reader}, noBrowser, out, errOut)
+	src := source{jobID: jobID, index: index, reader: reader}
+	if strings.TrimSpace(runDir) != "" {
+		src.run = &runArtifacts{dir: runDir}
+	}
+	return serve(ctx, src, noBrowser, out, errOut)
 }
 
 // source is either one saved rollout or a training job's recorded set.
@@ -66,6 +77,7 @@ type source struct {
 	jobID    string
 	index    *jobIndex
 	reader   rollouts.Reader
+	run      *runArtifacts
 }
 
 func serve(ctx context.Context, src source, noBrowser bool, out, errOut io.Writer) error {
@@ -195,6 +207,7 @@ func newHandler(src source, host string) (http.Handler, error) {
 		_, _ = w.Write(encoded)
 	})
 	files := http.FileServerFS(assets)
+	registerRunRoutes(mux, src)
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			info, err := fs.Stat(assets, r.URL.Path[1:])

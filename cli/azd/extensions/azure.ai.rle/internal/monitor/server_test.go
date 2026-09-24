@@ -348,7 +348,7 @@ func TestSingleRolloutModeHasNoIndex(t *testing.T) {
 
 func TestRunJobSurfacesListFailure(t *testing.T) {
 	stub := &stubJobSource{err: errors.New("service unavailable")}
-	err := RunJob(context.Background(), stub, stub, "ftjob-1", true, io.Discard, io.Discard)
+	err := RunJob(context.Background(), stub, stub, "ftjob-1", "", true, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "service unavailable") {
 		t.Fatalf("err = %v, want the listing failure", err)
 	}

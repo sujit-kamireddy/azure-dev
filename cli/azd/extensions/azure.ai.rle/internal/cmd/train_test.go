@@ -573,12 +573,14 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	defer cancel()
 
 	started := make(chan string, 1)
+	monitored := make(chan string, 1)
 	originalMonitor := runJobMonitor
 	runJobMonitor = func(
 		ctx context.Context, _ rollouts.Reader, _ rollouts.Lister,
-		jobID string, _ bool, _, _ io.Writer,
+		jobID string, runDir string, _ bool, _, _ io.Writer,
 	) error {
 		started <- jobID
+		monitored <- runDir
 		<-ctx.Done()
 		return nil
 	}
@@ -594,8 +596,9 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	}
 	t.Cleanup(func() { followTrainingRunFunc = originalFollow })
 
+	logsRoot := t.TempDir()
 	action, output := stubbedTrain(t, ctx,
-		&rleTrainFlags{follow: true, noBrowser: true, logsRoot: t.TempDir()})
+		&rleTrainFlags{follow: true, noBrowser: true, logsRoot: logsRoot})
 
 	returned := make(chan error, 1)
 	go func() { returned <- action.Run() }()
@@ -607,6 +610,12 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("--follow did not start the rollout dashboard")
+	}
+
+	// The dashboard must read the same directory the stream writes, or it would
+	// show a run with no metrics while they are being downloaded beside it.
+	if runDir := <-monitored; runDir != filepath.Join(logsRoot, "rle-harness", "ftjob-1") {
+		t.Fatalf("dashboard read %q, want the run mirror --follow writes", runDir)
 	}
 
 	<-streamed

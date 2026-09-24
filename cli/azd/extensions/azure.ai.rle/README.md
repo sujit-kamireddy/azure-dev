@@ -539,19 +539,21 @@ monitor without deleting saved artifacts.
 | Option | When to use it |
 | --- | --- |
 | `--output-dir <path>` | Read from an artifact root other than `.output` in the current folder. Pass the parent of the rollout-ID directories, not an individual rollout folder. |
+| `--logs-root <path>` | With `--job-id`, read the run mirror `train --follow` wrote somewhere other than `$LOOM_LOGS_ROOT` or `~/loom-runs`. |
 | `--no-browser` | On standalone `monitor`, print a link instead of opening the browser. Open the printed link yourself. |
 
 `--no-prompt` does not disable browser launching or stop the monitor.
 `--output` is not supported on standalone `monitor`.
 
-Monitoring reads the existing [rollout artifacts](#rollout-artifacts), not remote
-results. If the rollout directory is missing, it warns and exits without opening
-a dashboard; check the ID and `--output-dir`. Incomplete or corrupt files return
-an error.
+Monitoring `--rollout-id` reads the existing [rollout artifacts](#rollout-artifacts),
+not remote results. If the rollout directory is missing, it warns and exits without
+opening a dashboard; check the ID and `--output-dir`. Incomplete or corrupt files
+return an error.
 
-**Current limits:** completed local snapshots only—no live updates or job monitoring.
-Conversation text and metrics appear only when included in the saved data.
-Execution completion does not imply task success.
+**Current limits:** `--rollout-id` shows one completed local snapshot, with no
+live updates; use `--job-id` to follow a training run as it goes. Conversation
+text and metrics appear only when included in the saved data. Execution
+completion does not imply task success.
 
 **Treat saved artifacts as sensitive:** they may contain customer content.
 Keep `.output` out of source control and delete artifacts when no longer needed.
@@ -615,18 +617,34 @@ already on disk. If the stream drops, `train` reports it but still exits zero --
 the job was accepted and is running on the service, and a non-zero exit would
 say otherwise.
 
-`--follow` also serves the rollout dashboard for the run it submitted, and
-prints its address:
+`--follow` also serves the run dashboard for the job it submitted, and prints
+its address:
 
 ```text
 Rollout monitor for job ftjob-1234 (0 rollouts so far): http://127.0.0.1:41233/
 ```
 
-It opens empty, because the first rollout of a run takes minutes. The page polls
-as the run records them, so rollouts appear without reloading, and any of them
-can be opened while the run continues. The dashboard stays up after the run
-finishes -- that is when its rollouts are finally all there to read -- so stop it
-with Ctrl+C. `--no-browser` prints the address without opening a browser.
+The dashboard reads the same local mirror the stream is writing, so a followed
+run is shown as a run rather than as a list of rollouts:
+
+- **What it is** -- environment name and version, base model, renderer, Loom
+  session, context window, dataset counts, and the hyperparameters the service
+  actually applied. Facade defaults override recipe values, so this is where to
+  check what a job is really training with. Training cases read `32 of 804`:
+  what the run trains on, out of what the file holds.
+- **How it is going** -- reward, task success, learning signal, gradient norm,
+  policy entropy and KL, charted per step, with the latest value of each and
+  how far it has moved since the previous reading.
+- **What went wrong** -- a reward collapse or a run whose groups have stopped
+  disagreeing is named in plain text above the charts, with what to change.
+- **The run log**, tailed incrementally.
+
+It opens empty, because the first rollout and the first step of a run both take
+minutes. The page polls as the run records them, so rollouts and steps appear
+without reloading, and any rollout can be opened while the run continues. The
+dashboard stays up after the run finishes -- that is when its rollouts are
+finally all there to read -- so stop it with Ctrl+C. `--no-browser` prints the
+address without opening a browser.
 
 Without `--follow` the command exits as soon as the job is accepted, so there is
 nothing left to serve a dashboard from. It names the command that opens one
@@ -636,6 +654,11 @@ instead:
 Watch this run's rollouts as they land:
   azd ai rle monitor --job-id ftjob-1234
 ```
+
+`monitor --job-id` shows the same run panels for any job that was followed on
+this machine, reading `--logs-root` (default `$LOOM_LOGS_ROOT`, else
+`~/loom-runs`). A job that was never followed here still lists its rollouts --
+those come from the service -- with the run panels omitted.
 ### Training settings in `rle.toml`
 
 Everything above can be recorded in the environment's own `rle.toml`, so a run

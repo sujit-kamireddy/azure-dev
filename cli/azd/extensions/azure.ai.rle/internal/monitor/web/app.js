@@ -2,8 +2,9 @@
 // Licensed under the MIT License.
 
 import {
-  buildGraph, chartScales, fetchRolloutIndex, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
-  sequenceData, sequenceLabel, sequencePage, TOKEN_PAGE_SIZE,
+  buildGraph, chartGeometry, chartPath, chartScales, fetchRolloutIndex, fetchRunLog, fetchRunMetrics,
+  fetchRunOverview, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
+  runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage, TOKEN_PAGE_SIZE,
 } from "./data.mjs";
 
 const byID = (id) => document.getElementById(id);
@@ -815,6 +816,7 @@ function renderRolloutList() {
 function showRolloutList() {
   byID("snapshot").hidden = true;
   byID("rollout-list").hidden = false;
+  byID("run-overview").hidden = !hasRunView;
   byID("load-status").className = "sr-only";
   byID("load-status").textContent = `${rolloutIndex.data.length} rollouts recorded.`;
 }
@@ -826,6 +828,7 @@ async function openRollout(rolloutID) {
   try {
     setSnapshot(await fetchSnapshot(fetch, rolloutID));
     byID("rollout-list").hidden = true;
+    byID("run-overview").hidden = true;
     byID("back-to-list").hidden = false;
     byID("main").focus();
   } catch (error) {
@@ -852,7 +855,10 @@ let pollTimer = null;
 
 function startPolling() {
   if (pollTimer !== null) return;
-  pollTimer = setInterval(pollForNewRollouts, pollIntervalMs);
+  pollTimer = setInterval(() => {
+    pollForNewRollouts();
+    pollRunView();
+  }, pollIntervalMs);
 }
 
 async function pollForNewRollouts() {
@@ -877,6 +883,216 @@ async function pollForNewRollouts() {
   renderRolloutList();
 }
 
+// ---------------------------------------------------------------------------
+// Training run view
+//
+// A job is shown as the run it is -- what it trains, on what, and whether it is
+// working -- above the rollouts it has produced. Everything here reads the
+// local mirror `train --follow` writes, so it appears only for a run that was
+// followed on this machine.
+// ---------------------------------------------------------------------------
+
+let runOverview = null;
+let runMetrics = [];
+let runLogOffset = 0;
+let hasRunView = false;
+
+function formatMetric(value, style) {
+  if (!isNumber(value)) return "—";
+  if (style === "percent") return `${(value * 100).toFixed(1)}%`;
+  return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toFixed(3);
+}
+
+// A change in a percentage is measured in points, not percent: success going
+// from 25% to 50% is +25 points, and calling that "+25%" invites reading it as
+// a quarter more rather than double.
+function formatDelta(value, style) {
+  if (style === "percent") return `${(value * 100).toFixed(1)}pp`;
+  return formatMetric(value, style);
+}
+
+function renderRunHeadline() {
+  const container = byID("run-headline");
+  container.replaceChildren();
+  for (const entry of runHeadline(runMetrics)) {
+    const card = element("div", undefined, "metric");
+    card.append(element("p", formatMetric(entry.value, entry.format), "metric-value"));
+    card.append(element("h2", entry.label));
+    // The direction of travel is the point; a bare number cannot show it.
+    if (isNumber(entry.delta) && entry.delta !== 0) {
+      const rising = entry.delta > 0;
+      const sign = rising ? "+" : "−";
+      const change = element("p",
+        `${sign}${formatDelta(Math.abs(entry.delta), entry.format)} vs previous`,
+        `metric-delta ${rising ? "rising" : "falling"}`);
+      card.append(change);
+    }
+    container.append(card);
+  }
+}
+
+function factGroup(title, rows) {
+  const group = element("section", undefined, "fact-group");
+  group.append(element("p", title, "eyebrow"));
+  const list = element("dl", undefined, "field-list");
+  for (const [label, value] of rows) list.append(element("dt", label), element("dd", String(value)));
+  group.append(list);
+  return group;
+}
+
+function renderRunFacts() {
+  const container = byID("run-facts");
+  container.replaceChildren();
+  const facts = runFacts(runOverview);
+  for (const [title, rows] of [
+    ["ENVIRONMENT", facts.identity], ["MODEL", facts.model],
+    ["DATA", facts.dataset], ["HYPERPARAMETERS", facts.training],
+  ]) {
+    if (rows.length) container.append(factGroup(title, rows));
+  }
+}
+
+function chartLegend(geometry) {
+  const legend = element("div", undefined, "chart-legend");
+  for (const entry of geometry.series) {
+    const item = element("span", undefined, `legend-series tone-${entry.tone}`);
+    item.append(element("span", "", "legend-swatch"), element("span", entry.name));
+    legend.append(item);
+  }
+  return legend;
+}
+
+function chartFigure(chart) {
+  const geometry = chartGeometry(chart);
+  if (!geometry) return null;
+  const panel = element("section", undefined, "run-chart");
+  panel.append(element("h3", chart.title));
+  panel.append(chartLegend(geometry));
+
+  const svg = svgElement("svg", {
+    viewBox: `-2 -6 ${geometry.width + 4} ${geometry.height + 12}`,
+    class: "run-chart-plot", role: "img",
+    "aria-label": `${chart.title} across steps ${geometry.minStep} to ${geometry.maxStep}`,
+  });
+  // A zero line only means something on a chart that crosses it.
+  if (geometry.minValue < 0 && geometry.maxValue > 0) {
+    const zero = geometry.height - (0 - geometry.minValue) / (geometry.maxValue - geometry.minValue) * geometry.height;
+    svg.append(svgElement("line", { x1: 0, y1: zero, x2: geometry.width, y2: zero, class: "chart-zero" }));
+  }
+  for (const entry of geometry.series) {
+    svg.append(svgElement("path", {
+      d: chartPath(entry.coordinates), class: `chart-line tone-${entry.tone}`, fill: "none",
+    }));
+    // Marking the points keeps a two-step run from looking like a bare line and
+    // makes a single reading visible at all.
+    for (const point of entry.coordinates) {
+      const dot = svgElement("circle", { cx: point.x, cy: point.y, r: 2.5, class: `chart-dot tone-${entry.tone}` });
+      dot.append(svgElement("title", {}, `Step ${point.step}: ${point.value}`));
+      svg.append(dot);
+    }
+  }
+  panel.append(svg);
+
+  const axis = element("div", undefined, "chart-axis");
+  axis.append(element("span", formatMetric(geometry.minValue)), element("span", `step ${geometry.minStep}`));
+  axis.append(element("span", `step ${geometry.maxStep}`), element("span", formatMetric(geometry.maxValue)));
+  panel.append(axis);
+  panel.append(element("p", chart.note, "section-note"));
+  return panel;
+}
+
+function renderRunCharts() {
+  const container = byID("run-charts");
+  container.replaceChildren();
+  for (const chart of runCharts(runMetrics)) {
+    const figure = chartFigure(chart);
+    if (figure) container.append(figure);
+  }
+  byID("run-pending").hidden = runMetrics.length > 0;
+}
+
+function renderRunProgress() {
+  const steps = runMetrics.length;
+  const maxSteps = runOverview?.config?.max_steps;
+  byID("run-progress").textContent = steps === 0
+    ? "· no steps yet"
+    : isNumber(maxSteps) ? `· step ${steps} of ${maxSteps}` : `· ${count(steps)} steps`;
+}
+
+function renderRunView() {
+  byID("run-job-id").textContent = rolloutIndex?.job_id || "";
+  renderRunProgress();
+  notices("run-warnings", runWarnings(runMetrics));
+  renderRunHeadline();
+  renderRunFacts();
+  renderRunCharts();
+}
+
+// The log is appended to, so only what is new is fetched and appended. Reading
+// it should not jump the reader back to the top on every poll.
+function appendRunLog(tail) {
+  if (!tail || typeof tail.text !== "string") return;
+  const view = byID("run-log-text");
+  if (tail.text) view.append(document.createTextNode(tail.text));
+  runLogOffset = isNumber(tail.offset) ? tail.offset : runLogOffset;
+  byID("run-log-size").textContent = isNumber(tail.size) && tail.size > 0
+    ? `· ${count(Math.round(tail.size / 1024))} KB written` : "";
+  const panel = byID("run-log-panel");
+  if (panel.open && view.scrollHeight - view.scrollTop - view.clientHeight < 80) {
+    view.scrollTop = view.scrollHeight;
+  }
+}
+
+// A job that was never followed on this machine has no local artifacts. That is
+// a normal way to open the monitor, so the run panel simply stays away.
+async function loadRunView() {
+  let overview;
+  try {
+    overview = await fetchRunOverview();
+  } catch {
+    return false;
+  }
+  if (!overview || !overview.run) return false;
+  runOverview = overview.run;
+  await refreshRunMetrics();
+  renderRunView();
+  return true;
+}
+
+async function refreshRunMetrics() {
+  try {
+    const metrics = await fetchRunMetrics();
+    if (metrics && Array.isArray(metrics.data)) runMetrics = metrics.data;
+  } catch {
+    // The rollouts are still worth showing; the next poll retries.
+  }
+}
+
+async function pollRunView() {
+  if (!runOverview || byID("run-overview").hidden) return;
+  try {
+    const overview = await fetchRunOverview();
+    if (overview && overview.run) runOverview = overview.run;
+  } catch {
+    return;
+  }
+  await refreshRunMetrics();
+  renderRunView();
+  await refreshRunLog();
+}
+
+// The log is only read while it is being looked at. It is the largest artifact
+// by far, and a closed panel polling it would cost more than everything else
+// on the page put together.
+async function refreshRunLog() {
+  if (!byID("run-log-panel").open) return;
+  try {
+    appendRunLog(await fetchRunLog(fetch, runLogOffset));
+  } catch {
+    // A log that cannot be read does not invalidate the charts above it.
+  }
+}
+
 async function load() {
   byID("retry").disabled = true;
   byID("load-error").hidden = true;
@@ -887,6 +1103,9 @@ async function load() {
     if (rolloutIndex) {
       refreshFilters();
       renderRolloutList();
+      // The run panel is best-effort: a job can always be browsed by its
+      // rollouts, with or without a local mirror to describe it.
+      hasRunView = await loadRunView();
       showRolloutList();
       startPolling();
       return;
@@ -911,6 +1130,7 @@ byID("back-button").addEventListener("click", () => {
 });
 byID("list-split").addEventListener("change", renderRolloutList);
 byID("list-step").addEventListener("change", renderRolloutList);
+byID("run-log-panel").addEventListener("toggle", refreshRunLog);
 
 byID("retry").addEventListener("click", load);
 byID("final-response-toggle").addEventListener("click", () => {

@@ -352,13 +352,15 @@ func (a *trainAction) followJob(client *finetuneClient, jobID string) error {
 	// is to watch them land, not to read them once it is over.
 	//
 	// It starts empty: the first rollout of a run takes minutes. The page polls,
-	// so rollouts appear as the run records them.
+	// so rollouts appear as the run records them. It reads the same mirror the
+	// stream below writes, so the metrics and the log are the ones already being
+	// downloaded -- following a run fetches its artifacts once, not twice.
 	dashboard := make(chan struct{})
 	go func() {
 		defer close(dashboard)
 		source := &jobRollouts{client: client, jobID: jobID}
 		if err := runJobMonitor(
-			a.cmd.Context(), source, source, jobID, a.flags.noBrowser,
+			a.cmd.Context(), source, source, jobID, runMirrorDir(logsRoot, jobID), a.flags.noBrowser,
 			a.cmd.OutOrStdout(), a.cmd.ErrOrStderr(),
 		); err != nil {
 			// The stream is the part that must keep working; a dashboard that

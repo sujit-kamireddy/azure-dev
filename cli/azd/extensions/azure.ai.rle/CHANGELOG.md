@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- The job dashboard now shows the training run, not only the rollouts it
+  recorded. `train --follow` already mirrors a run's artifacts locally; the
+  monitor reads that mirror and adds what the job is -- environment, base model,
+  Loom session, dataset counts and the hyperparameters the service actually
+  applied -- above per-step charts of reward, task success, learning signal,
+  gradient norm, entropy and KL, plus a tailed run log.
+
+  A run that collapses or stops producing mixed groups is named in plain text
+  with what to change, rather than left to be read off a line that went down.
+  Showing the applied hyperparameters beside the curves is the point: facade
+  defaults override recipe values, and a collapse is usually visible in them.
+
+  `monitor --job-id` shows the same panels for any job followed on this machine
+  and gained `--logs-root` to find its mirror. A job that was never followed
+  here still lists its rollouts, which come from the service, with the run
+  panels omitted.
+
+  Charts are drawn as SVG by the page itself. The dashboard serves no external
+  scripts and keeps its existing content security policy.
+
 - `azd ai rle train`, `jobs` and `monitor --job-id` now default to the RLE
   training service instead of deriving a fine-tuning endpoint from the Foundry
   account. RLE jobs are not served by an account's own fine-tuning API yet, so
