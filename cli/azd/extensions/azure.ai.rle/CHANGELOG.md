@@ -19,6 +19,11 @@
   here still lists its rollouts, which come from the service, with the run
   panels omitted.
 
+- Watching a job is now called a job monitor rather than a rollout monitor, in
+  the line the command prints and in the page's own heading and title. A job has
+  steps, metrics and a run log behind it; a single captured rollout does not,
+  and `rollout` keeps its own name.
+
   Charts are drawn as SVG by the page itself. The dashboard serves no external
   scripts and keeps its existing content security policy.
 

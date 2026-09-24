@@ -776,8 +776,22 @@ function visibleEntries() {
   });
 }
 
+// The same page serves one captured rollout and a whole training job. Only a
+// job carries a job id, so that is what decides which of the two it is called.
+function applyMonitorTitle(jobID) {
+  const label = jobID ? "Job monitor" : "Rollout monitor";
+  const brand = document.querySelector(".brand");
+  if (brand) {
+    const name = brand.querySelector("span:last-child");
+    if (name) name.textContent = label;
+    brand.setAttribute("aria-label", `RLE ${label.toLowerCase()} home`);
+  }
+  document.title = jobID ? `RLE job monitor · ${jobID}` : "RLE rollout monitor";
+}
+
 function renderRolloutList() {
   const entries = visibleEntries();
+  applyMonitorTitle(rolloutIndex.job_id || "");
   byID("list-job-id").textContent = rolloutIndex.job_id || "";
   byID("list-count").textContent = entries.length === rolloutIndex.data.length
     ? `· ${count(entries.length)} recorded`

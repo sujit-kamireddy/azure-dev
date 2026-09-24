@@ -229,7 +229,7 @@ func validateMonitorOutput(cmd *cobra.Command) error {
 	flag := cmd.Flag("output")
 	if flag != nil && flag.Changed {
 		return &azdext.LocalError{
-			Message:    "--output cannot be used with the rollout monitor.",
+			Message:    "--output cannot be used with the monitor.",
 			Code:       "rle_monitor_conflicting_arguments",
 			Category:   azdext.LocalErrorCategoryUser,
 			Suggestion: "Remove --output. The monitor prints its local browser link and access code.",

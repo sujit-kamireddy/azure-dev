@@ -86,7 +86,7 @@ FOUNDRY_PROJECT_ENDPOINT.`,
 	cmd.Flags().StringVar(&flags.logsRoot, "logs-root", "",
 		"Where --follow writes mirrored runs. Defaults to $LOOM_LOGS_ROOT, else ~/loom-runs.")
 	cmd.Flags().BoolVar(&flags.noBrowser, "no-browser", false,
-		"With --follow, print the rollout dashboard address without opening a browser.")
+		"With --follow, print the job monitor address without opening a browser.")
 	cmd.Flags().IntVar(&flags.taskCount, "task-count", 0,
 		"Train on only the first N tasks of the training dataset, for a smaller run. "+
 			"Sets the max_train_examples training option (0 uses the whole dataset).")
@@ -365,7 +365,7 @@ func (a *trainAction) followJob(client *finetuneClient, jobID string) error {
 		); err != nil {
 			// The stream is the part that must keep working; a dashboard that
 			// cannot start is worth saying once and no more.
-			fmt.Fprintf(a.cmd.ErrOrStderr(), "The rollout dashboard did not start: %v\n", err)
+			fmt.Fprintf(a.cmd.ErrOrStderr(), "The job monitor did not start: %v\n", err)
 		}
 	}()
 
@@ -388,7 +388,7 @@ func (a *trainAction) followJob(client *finetuneClient, jobID string) error {
 	// The run is over but its rollouts are not read yet. Hold the dashboard open
 	// until the user stops it, rather than closing the window they were sent to.
 	fmt.Fprintf(a.cmd.OutOrStdout(),
-		"\nThe rollout dashboard is still running. Press Ctrl+C to stop it.\n")
+		"\nThe job monitor is still running. Press Ctrl+C to stop it.\n")
 	<-dashboard
 	return nil
 }

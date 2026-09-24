@@ -609,7 +609,7 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 			t.Fatalf("dashboard opened %q, want the submitted job", jobID)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("--follow did not start the rollout dashboard")
+		t.Fatal("--follow did not start the job monitor")
 	}
 
 	// The dashboard must read the same directory the stream writes, or it would
@@ -640,8 +640,8 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	if !strings.Contains(output.String(), "Final status: succeeded") {
 		t.Fatalf("output = %q, want the run's final status", output.String())
 	}
-	if !strings.Contains(output.String(), "dashboard is still running") {
-		t.Fatalf("output = %q, want the dashboard to outlive the run", output.String())
+	if !strings.Contains(output.String(), "job monitor is still running") {
+		t.Fatalf("output = %q, want the monitor to outlive the run", output.String())
 	}
 }
 

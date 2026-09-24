@@ -621,7 +621,7 @@ say otherwise.
 its address:
 
 ```text
-Rollout monitor for job ftjob-1234 (0 rollouts so far): http://127.0.0.1:41233/
+Job monitor for ftjob-1234 (0 rollouts so far): http://127.0.0.1:41233/
 ```
 
 The dashboard reads the same local mirror the stream is writing, so a followed
