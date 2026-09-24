@@ -376,10 +376,11 @@ export async function fetchSnapshot(fetcher = fetch, rolloutID = "") {
 }
 
 // Returns null when the monitor serves a single saved rollout and has no set to browse.
-export async function fetchRolloutIndex(fetcher = fetch) {
+export async function fetchRolloutIndex(fetcher = fetch, after = "") {
+  const url = after ? `/api/rollouts?after=${encodeURIComponent(after)}` : "/api/rollouts";
   let result;
   try {
-    result = await fetcher("/api/rollouts", { credentials: "same-origin", cache: "no-store",
+    result = await fetcher(url, { credentials: "same-origin", cache: "no-store",
       headers: { Accept: "application/json" } });
   } catch {
     throw new Error("Could not reach the local monitor. Check that the monitor command is still running, then try again.");

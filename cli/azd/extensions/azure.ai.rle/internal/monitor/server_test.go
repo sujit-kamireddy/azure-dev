@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -175,18 +176,54 @@ func TestRunServesAndStops(t *testing.T) {
 	}
 }
 
+// stubJobSource models the service's rollout index: rows in the order the run
+// recorded them, with `after` seeking past one. Entries can be appended between
+// calls, which is what a running job does.
 type stubJobSource struct {
+	mu       sync.Mutex
 	entries  []rollouts.Entry
 	requests []string
+	listedAt []string
 	err      error
 }
 
-func (s *stubJobSource) List(context.Context) ([]rollouts.Entry, error) { return s.entries, s.err }
+func (s *stubJobSource) record(entries ...rollouts.Entry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries = append(s.entries, entries...)
+}
+
+func (s *stubJobSource) listCalls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.listedAt...)
+}
+
+func (s *stubJobSource) List(_ context.Context, after string) ([]rollouts.Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.listedAt = append(s.listedAt, after)
+	if s.err != nil {
+		return nil, s.err
+	}
+	if after == "" {
+		return append([]rollouts.Entry(nil), s.entries...), nil
+	}
+	for position, entry := range s.entries {
+		if entry.RolloutID == after {
+			return append([]rollouts.Entry(nil), s.entries[position+1:]...), nil
+		}
+	}
+	return nil, nil
+}
 
 func (s *stubJobSource) Get(_ context.Context, rolloutID string) (rollouts.Snapshot, error) {
+	s.mu.Lock()
 	s.requests = append(s.requests, rolloutID)
-	if s.err != nil {
-		return rollouts.Snapshot{}, s.err
+	failure := s.err
+	s.mu.Unlock()
+	if failure != nil {
+		return rollouts.Snapshot{}, failure
 	}
 	return rollouts.Snapshot{
 		Response: json.RawMessage(`{"rollout_id":"` + rolloutID + `","reward":1}`),
@@ -194,13 +231,39 @@ func (s *stubJobSource) Get(_ context.Context, rolloutID string) (rollouts.Snaps
 	}, nil
 }
 
-func jobHandler(t *testing.T, stub *stubJobSource) http.Handler {
+func (s *stubJobSource) fetched() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.requests...)
+}
+
+// jobHandler serves the stub through a live index, as the command does.
+// The returned index is handed back so a test can age it and force a refresh.
+func jobHandlerWithIndex(t *testing.T, stub *stubJobSource) (http.Handler, *jobIndex) {
 	t.Helper()
-	handler, err := newHandler(source{jobID: "ftjob-1", entries: stub.entries, reader: stub}, testHost)
+	index := newJobIndex("ftjob-1", stub)
+	if _, err := index.fetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(source{jobID: "ftjob-1", index: index, reader: stub}, testHost)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return handler, index
+}
+
+func jobHandler(t *testing.T, stub *stubJobSource) http.Handler {
+	t.Helper()
+	handler, _ := jobHandlerWithIndex(t, stub)
 	return handler
+}
+
+// age makes the index stale so the next request refreshes, without a test
+// having to wait out the refresh interval.
+func age(index *jobIndex) {
+	index.mu.Lock()
+	defer index.mu.Unlock()
+	index.attempted = time.Time{}
 }
 
 func jobRequest(t *testing.T, handler http.Handler, path string) *httptest.ResponseRecorder {
@@ -237,16 +300,16 @@ func TestJobModeListsAndFetchesOnDemand(t *testing.T) {
 		t.Fatalf("list = %+v, want job ftjob-1 with 2 entries", listed)
 	}
 	// The index must stay a summary: a run records thousands of large responses.
-	if len(stub.requests) != 0 {
-		t.Fatalf("listing fetched %v, want no rollout bodies", stub.requests)
+	if len(stub.fetched()) != 0 {
+		t.Fatalf("listing fetched %v, want no rollout bodies", stub.fetched())
 	}
 
 	body := jobRequest(t, handler, "/api/rollout?id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if body.Code != 200 {
 		t.Fatalf("fetch status = %d, want 200", body.Code)
 	}
-	if len(stub.requests) != 1 || stub.requests[0] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
-		t.Fatalf("fetched %v, want the opened rollout only", stub.requests)
+	if opened := stub.fetched(); len(opened) != 1 || opened[0] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("fetched %v, want the opened rollout only", opened)
 	}
 }
 
@@ -257,8 +320,8 @@ func TestJobModeRejectsRolloutsOutsideTheJob(t *testing.T) {
 	if response.Code != 404 {
 		t.Fatalf("status = %d, want 404 for a rollout this job did not record", response.Code)
 	}
-	if len(stub.requests) != 0 {
-		t.Fatalf("fetched %v, want no call for an unlisted rollout", stub.requests)
+	if len(stub.fetched()) != 0 {
+		t.Fatalf("fetched %v, want no call for an unlisted rollout", stub.fetched())
 	}
 }
 
@@ -288,5 +351,175 @@ func TestRunJobSurfacesListFailure(t *testing.T) {
 	err := RunJob(context.Background(), stub, stub, "ftjob-1", true, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "service unavailable") {
 		t.Fatalf("err = %v, want the listing failure", err)
+	}
+}
+
+// A run records rollouts for as long as it lasts, so a list read once would
+// stop at whatever had landed when the dashboard opened.
+func TestJobModeListsRolloutsRecordedAfterTheDashboardOpened(t *testing.T) {
+	stub := &stubJobSource{entries: []rollouts.Entry{
+		{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Sequence: 1},
+	}}
+	handler, index := jobHandlerWithIndex(t, stub)
+
+	stub.record(rollouts.Entry{RolloutID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Sequence: 2})
+	age(index)
+
+	var listed struct {
+		Data  []rollouts.Entry `json:"data"`
+		Reset bool             `json:"reset"`
+	}
+	response := jobRequest(t, handler, "/api/rollouts")
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Data) != 2 {
+		t.Fatalf("listed %d rollouts, want the one recorded after the dashboard opened too", len(listed.Data))
+	}
+}
+
+// Polling asks only for what is new, so the cost of a poll does not grow with
+// the length of the run.
+func TestJobModePollReturnsOnlyWhatIsNew(t *testing.T) {
+	stub := &stubJobSource{entries: []rollouts.Entry{
+		{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Sequence: 1},
+	}}
+	handler, index := jobHandlerWithIndex(t, stub)
+
+	stub.record(rollouts.Entry{RolloutID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Sequence: 2})
+	age(index)
+
+	var listed struct {
+		Data  []rollouts.Entry `json:"data"`
+		Reset bool             `json:"reset"`
+	}
+	response := jobRequest(t, handler, "/api/rollouts?after=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Data) != 1 || listed.Data[0].RolloutID != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("poll returned %+v, want only the new rollout", listed.Data)
+	}
+	if listed.Reset {
+		t.Fatal("reset = true, want false: the caller's position was recognized")
+	}
+	// The trip to the service must also be incremental, not a re-read of the run.
+	calls := stub.listCalls()
+	if len(calls) != 2 || calls[1] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("service listed at %v, want the second call to resume after the first rollout", calls)
+	}
+}
+
+// An unrecognized position is answered with the whole list, and says so, or the
+// page would append a second copy of every rollout it already shows.
+func TestJobModeSignalsAResyncForAnUnknownPosition(t *testing.T) {
+	stub := &stubJobSource{entries: []rollouts.Entry{
+		{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Sequence: 1},
+	}}
+	handler := jobHandler(t, stub)
+
+	var listed struct {
+		Data  []rollouts.Entry `json:"data"`
+		Reset bool             `json:"reset"`
+	}
+	response := jobRequest(t, handler, "/api/rollouts?after=cccccccccccccccccccccccccccccccc")
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if !listed.Reset {
+		t.Fatal("reset = false, want true so the page replaces rather than appends")
+	}
+	if len(listed.Data) != 1 {
+		t.Fatalf("listed %d rollouts, want the whole list", len(listed.Data))
+	}
+}
+
+// The page can show a rollout the index gained on its last poll, so refusing to
+// open one merely because an older list did not have it would be wrong.
+func TestJobModeOpensARolloutRecordedSinceTheLastRefresh(t *testing.T) {
+	stub := &stubJobSource{entries: []rollouts.Entry{
+		{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Sequence: 1},
+	}}
+	handler := jobHandler(t, stub)
+
+	stub.record(rollouts.Entry{RolloutID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Sequence: 2})
+
+	response := jobRequest(t, handler, "/api/rollout?id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	if response.Code != 200 {
+		t.Fatalf("status = %d, want 200 for a rollout recorded since the last refresh", response.Code)
+	}
+}
+
+// The guard is the reason the page cannot be used to read an arbitrary rollout
+// through the caller's credentials, so a refresh must not weaken it.
+func TestJobModeStillRejectsAnUnrecordedRolloutAfterRefreshing(t *testing.T) {
+	stub := &stubJobSource{entries: []rollouts.Entry{
+		{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Sequence: 1},
+	}}
+	handler := jobHandler(t, stub)
+
+	stub.record(rollouts.Entry{RolloutID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Sequence: 2})
+
+	response := jobRequest(t, handler, "/api/rollout?id=cccccccccccccccccccccccccccccccc")
+	if response.Code != 404 {
+		t.Fatalf("status = %d, want 404: refreshing must not admit a rollout the job never recorded", response.Code)
+	}
+	if len(stub.fetched()) != 0 {
+		t.Fatalf("fetched %v, want no call for an unrecorded rollout", stub.fetched())
+	}
+}
+
+// A run in progress may have recorded nothing yet, which is an empty dashboard
+// rather than a failure.
+func TestJobModeServesARunWithNoRolloutsYet(t *testing.T) {
+	handler := jobHandler(t, &stubJobSource{})
+	response := jobRequest(t, handler, "/api/rollouts")
+	if response.Code != 200 {
+		t.Fatalf("status = %d, want 200 for a run that has not recorded a rollout yet", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), `"data":[]`) {
+		t.Fatalf("body = %s, want an empty list", response.Body.String())
+	}
+}
+
+// A poll that fails must not blank a list the user is reading.
+func TestJobModeKeepsListedRolloutsWhenARefreshFails(t *testing.T) {
+	stub := &stubJobSource{entries: []rollouts.Entry{
+		{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Sequence: 1},
+	}}
+	handler, index := jobHandlerWithIndex(t, stub)
+
+	stub.mu.Lock()
+	stub.err = errors.New("service unavailable")
+	stub.mu.Unlock()
+	age(index)
+
+	response := jobRequest(t, handler, "/api/rollouts")
+	if response.Code != 200 {
+		t.Fatalf("status = %d, want 200: a failed refresh should not fail the request", response.Code)
+	}
+	var listed struct {
+		Data []rollouts.Entry `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Data) != 1 {
+		t.Fatalf("listed %d rollouts, want the one already known", len(listed.Data))
+	}
+}
+
+// Without a floor, every request the page makes would be a call to the service.
+func TestJobIndexDoesNotRefreshOnEveryRequest(t *testing.T) {
+	stub := &stubJobSource{entries: []rollouts.Entry{
+		{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Sequence: 1},
+	}}
+	handler := jobHandler(t, stub)
+
+	for range 5 {
+		jobRequest(t, handler, "/api/rollouts")
+	}
+	if calls := stub.listCalls(); len(calls) != 1 {
+		t.Fatalf("listed %d times, want only the load at startup within the refresh interval", len(calls))
 	}
 }

@@ -836,6 +836,47 @@ async function openRollout(rolloutID) {
   }
 }
 
+function refreshFilters() {
+  const splits = [...new Set(rolloutIndex.data.map((entry) => entry.split).filter(Boolean))].sort();
+  const steps = [...new Set(rolloutIndex.data.map(stepLabel).filter(Boolean))].sort();
+  optionsFor(byID("list-split"), splits, "All");
+  optionsFor(byID("list-step"), steps, "All");
+}
+
+// A training run records rollouts for as long as it lasts, so the list is
+// polled rather than read once. Only what is new is asked for, and only the
+// list view polls: reading a rollout should not be interrupted by the table
+// underneath it changing.
+const pollIntervalMs = 5000;
+let pollTimer = null;
+
+function startPolling() {
+  if (pollTimer !== null) return;
+  pollTimer = setInterval(pollForNewRollouts, pollIntervalMs);
+}
+
+async function pollForNewRollouts() {
+  if (!rolloutIndex || byID("rollout-list").hidden) return;
+  const last = rolloutIndex.data.length
+    ? rolloutIndex.data[rolloutIndex.data.length - 1].rollout_id
+    : "";
+  let update;
+  try {
+    update = await fetchRolloutIndex(fetch, last);
+  } catch {
+    // A poll that cannot reach the monitor is not worth reporting: the rollouts
+    // already listed are still valid, and the next tick retries.
+    return;
+  }
+  if (!update || !update.data || update.data.length === 0) return;
+  // `reset` means the monitor answered with the whole list rather than the part
+  // that is new, so appending it would double every rollout already shown.
+  if (update.reset) rolloutIndex.data = update.data;
+  else rolloutIndex.data.push(...update.data);
+  refreshFilters();
+  renderRolloutList();
+}
+
 async function load() {
   byID("retry").disabled = true;
   byID("load-error").hidden = true;
@@ -844,12 +885,10 @@ async function load() {
   try {
     rolloutIndex = await fetchRolloutIndex();
     if (rolloutIndex) {
-      const splits = [...new Set(rolloutIndex.data.map((entry) => entry.split).filter(Boolean))].sort();
-      const steps = [...new Set(rolloutIndex.data.map(stepLabel).filter(Boolean))].sort();
-      optionsFor(byID("list-split"), splits, "All");
-      optionsFor(byID("list-step"), steps, "All");
+      refreshFilters();
       renderRolloutList();
       showRolloutList();
+      startPolling();
       return;
     }
     setSnapshot(await fetchSnapshot());

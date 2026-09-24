@@ -14,8 +14,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"azure.ai.rle/internal/project"
+	"azure.ai.rle/internal/rollouts"
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 )
 
@@ -428,5 +430,149 @@ func TestTrainCommandNoLongerRequiresRleFlags(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "rle-name") || strings.Contains(err.Error(), "rle-version") {
 		t.Fatalf("expected rle-name and rle-version to be optional, got %v", err)
+	}
+}
+
+// stubbedTrain wires train to a transport that accepts an upload and a job
+// creation, and returns the action alongside the buffer it writes to.
+func stubbedTrain(t *testing.T, ctx context.Context, flags *rleTrainFlags) (*trainAction, *bytes.Buffer) {
+	t.Helper()
+	trainingFilePath := filepath.Join(t.TempDir(), "training.jsonl")
+	if err := os.WriteFile(trainingFilePath, []byte("{\"input\":\"example\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(foundryProjectEndpointEnvVar, "https://account.services.ai.azure.com/api/projects/project")
+
+	client := newFinetuneClientWithCredential("https://account.openai.azure.com", &testTokenCredential{})
+	client.httpClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		// The upload streams through a pipe, so a transport that answers without
+		// reading closes it under the writer.
+		if request.Body != nil {
+			if _, err := io.Copy(io.Discard, request.Body); err != nil {
+				return nil, err
+			}
+		}
+		body := `{"id":"file-training"}`
+		if request.URL.Path == finetuneJobsPath {
+			body = `{"id":"ftjob-1","status":"queued"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusCreated,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	originalCreateClient := createFinetuneClient
+	createFinetuneClient = func(string) (*finetuneClient, error) { return client, nil }
+	t.Cleanup(func() { createFinetuneClient = originalCreateClient })
+
+	command := newTrainCommand()
+	command.SetContext(ctx)
+	output := &bytes.Buffer{}
+	command.SetOut(output)
+	command.SetErr(output)
+
+	flags.rleName = "code_rl"
+	flags.rleVersion = "1.0.0"
+	flags.model = "Qwen/Qwen3-32B"
+	flags.trainingFile = trainingFilePath
+	return &trainAction{cmd: command, flags: flags}, output
+}
+
+// Without --follow the command exits, so there is no dashboard to serve. The
+// rollout ids a run generates are not knowable ahead of time, so the job id is
+// the only way back to them and has to be offered.
+func TestTrainNamesTheMonitorCommandWhenItIsNotFollowing(t *testing.T) {
+	action, output := stubbedTrain(t, context.Background(), &rleTrainFlags{})
+	if err := action.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "azd ai rle monitor --job-id ftjob-1") {
+		t.Fatalf("output = %q, want the command that opens this run's rollouts", output.String())
+	}
+}
+
+// An endpoint the run needed is an endpoint the monitor needs, so a pasted
+// command has to carry it.
+func TestTrainCarriesTheEndpointIntoTheMonitorCommand(t *testing.T) {
+	action, output := stubbedTrain(t, context.Background(),
+		&rleTrainFlags{endpoint: "https://account.openai.azure.com"})
+	if err := action.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "--job-id ftjob-1 --endpoint https://account.openai.azure.com") {
+		t.Fatalf("output = %q, want the endpoint carried into the monitor command", output.String())
+	}
+}
+
+// The point of following a run is watching its rollouts land, so the dashboard
+// runs alongside the stream rather than after it, and outlives it: the run
+// ending is when the rollouts are finally all there to read.
+func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started := make(chan string, 1)
+	originalMonitor := runJobMonitor
+	runJobMonitor = func(
+		ctx context.Context, _ rollouts.Reader, _ rollouts.Lister,
+		jobID string, _ bool, _, _ io.Writer,
+	) error {
+		started <- jobID
+		<-ctx.Done()
+		return nil
+	}
+	t.Cleanup(func() { runJobMonitor = originalMonitor })
+
+	streamed := make(chan struct{})
+	originalFollow := followTrainingRunFunc
+	followTrainingRunFunc = func(
+		context.Context, string, string, string, string, io.Writer,
+	) (string, error) {
+		close(streamed)
+		return "succeeded", nil
+	}
+	t.Cleanup(func() { followTrainingRunFunc = originalFollow })
+
+	action, output := stubbedTrain(t, ctx,
+		&rleTrainFlags{follow: true, noBrowser: true, logsRoot: t.TempDir()})
+
+	returned := make(chan error, 1)
+	go func() { returned <- action.Run() }()
+
+	select {
+	case jobID := <-started:
+		if jobID != "ftjob-1" {
+			t.Fatalf("dashboard opened %q, want the submitted job", jobID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("--follow did not start the rollout dashboard")
+	}
+
+	<-streamed
+	// The run is over. The command must still be serving, or the window the user
+	// was sent to would close on them.
+	select {
+	case err := <-returned:
+		t.Fatalf("train returned %v when the run finished, want the dashboard held open", err)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("train did not return after the dashboard was stopped")
+	}
+
+	if !strings.Contains(output.String(), "Final status: succeeded") {
+		t.Fatalf("output = %q, want the run's final status", output.String())
+	}
+	if !strings.Contains(output.String(), "dashboard is still running") {
+		t.Fatalf("output = %q, want the dashboard to outlive the run", output.String())
 	}
 }
