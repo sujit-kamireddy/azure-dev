@@ -37,7 +37,7 @@ If the rollout directory does not exist, the command warns and exits without
 opening a browser. Incomplete or corrupt artifacts still return an error.
 
 The monitor stays running until Ctrl+C. Use --no-browser to open the printed
-link manually and enter the local access code.`,
+link manually.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rolloutID = strings.TrimSpace(rolloutID)
@@ -110,7 +110,7 @@ func validateMonitorOutput(cmd *cobra.Command) error {
 			Message:    "--output cannot be used with the rollout monitor.",
 			Code:       "rle_monitor_conflicting_arguments",
 			Category:   azdext.LocalErrorCategoryUser,
-			Suggestion: "Remove --output. The monitor prints its local browser link and access code.",
+			Suggestion: "Remove --output. The monitor prints its local browser link.",
 		}
 	}
 	return nil
