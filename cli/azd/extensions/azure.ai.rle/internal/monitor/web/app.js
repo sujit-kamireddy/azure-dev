@@ -141,15 +141,27 @@ function renderActivitySummary() {
   }
 }
 
+// Two tablists share this page: the job's views and, inside a rollout, its
+// detail panels. Only ever one is on screen, but a document-wide sweep would
+// still deselect the other's panels, so each selection stays inside its bar.
 function selectTab(name, focus = false) {
-  for (const tab of document.querySelectorAll('[role="tab"]')) {
-    const selected = tab.id === `tab-${name}`;
+  const target = byID(`tab-${name}`);
+  if (!target) return;
+  for (const tab of target.closest('[role="tablist"]').querySelectorAll('[role="tab"]')) {
+    const selected = tab === target;
     tab.setAttribute("aria-selected", String(selected));
     tab.tabIndex = selected ? 0 : -1;
     byID(tab.getAttribute("aria-controls")).hidden = !selected;
     if (selected && focus) tab.focus();
   }
   if (name === "tokens") renderSequence();
+  // A hidden panel is not redrawn while it polls, so it is redrawn on the way in.
+  if (name === "metrics" || name === "rollouts") {
+    activeJobTab = name;
+    rememberJobTab(name);
+    if (name === "metrics" && runOverview) renderRunView();
+    if (name === "rollouts" && rolloutIndex) renderRolloutList();
+  }
 }
 
 function renderConversationMessage(message, fallbackRole) {
@@ -717,7 +729,8 @@ export function setSnapshot(snapshot) {
 for (const tab of document.querySelectorAll('[role="tab"]')) {
   tab.addEventListener("click", () => selectTab(tab.id.slice(4)));
   tab.addEventListener("keydown", (event) => {
-    const tabs = [...document.querySelectorAll('[role="tab"]')].filter((candidate) => !candidate.hidden);
+    const bar = tab.closest('[role="tablist"]');
+    const tabs = [...bar.querySelectorAll('[role="tab"]')].filter((candidate) => !candidate.hidden);
     let index = tabs.indexOf(tab);
     if (event.key === "ArrowRight") index = (index + 1) % tabs.length;
     else if (event.key === "ArrowLeft") index = (index + tabs.length - 1) % tabs.length;
@@ -747,9 +760,29 @@ byID("token-jump-form").addEventListener("submit", (event) => {
 
 let rolloutIndex = null;
 
+// A job monitor is left open and reloaded, so the view being watched outlives a
+// refresh. Session storage can be barred outright, which is not worth failing over.
+const JOB_TAB_KEY = "rle-monitor-job-tab";
+let activeJobTab = "metrics";
+try {
+  const stored = sessionStorage.getItem(JOB_TAB_KEY);
+  if (stored === "metrics" || stored === "rollouts") activeJobTab = stored;
+} catch { /* storage is unavailable; the default view still works */ }
+
+function rememberJobTab(name) {
+  try {
+    sessionStorage.setItem(JOB_TAB_KEY, name);
+  } catch { /* nothing to do: the tab still switches, it just will not persist */ }
+}
+
 function optionsFor(select, values, label) {
   const current = select.value;
-  select.replaceChildren(element("option", label, ""));
+  // An <option> with no value attribute reports its text as its value, so the
+  // "all" entry needs an explicit empty one or clearing the filter below finds
+  // no match and the select renders blank.
+  const blank = element("option", label);
+  blank.value = "";
+  select.replaceChildren(blank);
   for (const value of values) {
     const option = element("option", String(value));
     option.value = String(value);
@@ -825,14 +858,50 @@ function renderRolloutList() {
   }
   byID("list-empty").hidden = rolloutIndex.data.length > 0;
   byID("list-table").hidden = entries.length === 0;
+  renderRolloutTabCount();
 }
 
 function showRolloutList() {
   byID("snapshot").hidden = true;
-  byID("rollout-list").hidden = false;
-  byID("run-overview").hidden = !hasRunView;
+  // Tabs only earn their place when there are two views to hold. A job with no
+  // local mirror has rollouts and nothing else, and is shown as the plain list.
+  const tabbed = hasRunView;
+  byID("job-tabs").hidden = !tabbed;
+  for (const id of ["run-overview", "rollout-list"]) {
+    if (tabbed) byID(id).setAttribute("role", "tabpanel");
+    else byID(id).removeAttribute("role");
+  }
+  if (tabbed) {
+    selectTab(activeJobTab);
+  } else {
+    byID("rollout-list").hidden = false;
+    byID("run-overview").hidden = true;
+    renderRolloutList();
+  }
   byID("load-status").className = "sr-only";
   byID("load-status").textContent = `${rolloutIndex.data.length} rollouts recorded.`;
+}
+
+// The count belongs on the tab because the list it describes is usually the
+// view that is not on screen, and a run's rollout count is how you tell it is
+// still producing.
+function renderRolloutTabCount() {
+  if (!rolloutIndex) return;
+  byID("tab-rollouts-count").textContent = count(rolloutIndex.data.length);
+}
+
+// Reading a chart raises exactly one question -- what happened at that step --
+// and the answer is in the other tab. Clicking a step carries the filter over.
+function showRolloutsForStep(step) {
+  if (!rolloutIndex || byID("job-tabs").hidden) return;
+  // The list keys steps by checkpoint where one was reported, so the chart's
+  // step number is matched through a rollout rather than used as the value.
+  const match = rolloutIndex.data.find((entry) => entry.step === step);
+  const value = match ? stepLabel(match) : String(step);
+  const select = byID("list-step");
+  if (![...select.options].some((option) => option.value === value)) return;
+  select.value = value;
+  selectTab("rollouts", true);
 }
 
 async function openRollout(rolloutID) {
@@ -841,6 +910,7 @@ async function openRollout(rolloutID) {
   byID("load-error").hidden = true;
   try {
     setSnapshot(await fetchSnapshot(fetch, rolloutID));
+    byID("job-tabs").hidden = true;
     byID("rollout-list").hidden = true;
     byID("run-overview").hidden = true;
     byID("back-to-list").hidden = false;
@@ -876,7 +946,9 @@ function startPolling() {
 }
 
 async function pollForNewRollouts() {
-  if (!rolloutIndex || byID("rollout-list").hidden) return;
+  // Polling follows the job view rather than the visible tab: a count that
+  // stopped moving whenever the charts were up would report a live run as done.
+  if (!rolloutIndex || !byID("snapshot").hidden) return;
   const last = rolloutIndex.data.length
     ? rolloutIndex.data[rolloutIndex.data.length - 1].rollout_id
     : "";
@@ -894,7 +966,10 @@ async function pollForNewRollouts() {
   if (update.reset) rolloutIndex.data = update.data;
   else rolloutIndex.data.push(...update.data);
   refreshFilters();
-  renderRolloutList();
+  renderRolloutTabCount();
+  // Drawing a table nobody is looking at costs more than it is worth; the tab
+  // redraws it on the way in, from data this poll has already kept current.
+  if (!byID("rollout-list").hidden) renderRolloutList();
 }
 
 // ---------------------------------------------------------------------------
@@ -1084,6 +1159,11 @@ function attachChartHover(panel, svg, geometry, markers, crosshair) {
 
   svg.addEventListener("pointermove", move);
   svg.addEventListener("pointerleave", clear);
+  svg.addEventListener("click", (event) => {
+    const point = viewBoxPoint(svg, event);
+    const hover = point ? chartHoverAt(geometry, point.x) : null;
+    if (hover) showRolloutsForStep(hover.step);
+  });
   // A touch drag reads the chart the same way a mouse does, but it never fires
   // pointerleave, so the crosshair has to be taken down on release.
   svg.addEventListener("pointercancel", clear);
@@ -1226,7 +1306,7 @@ async function refreshRunMetrics() {
 }
 
 async function pollRunView() {
-  if (!runOverview || byID("run-overview").hidden) return;
+  if (!runOverview || !byID("snapshot").hidden) return;
   try {
     const overview = await fetchRunOverview();
     if (overview && overview.run) runOverview = overview.run;
@@ -1234,6 +1314,9 @@ async function pollRunView() {
     return;
   }
   await refreshRunMetrics();
+  // Metrics are kept current whichever tab is up, so switching to the charts
+  // shows the run as it is now rather than as it was when the tab was left.
+  if (byID("run-overview").hidden) return;
   renderRunView();
   await refreshRunLog();
 }
@@ -1270,6 +1353,7 @@ async function load() {
     setSnapshot(await fetchSnapshot());
   } catch (error) {
     byID("snapshot").hidden = true;
+    byID("job-tabs").hidden = true;
     byID("rollout-list").hidden = true;
     byID("load-status").className = "sr-only";
     byID("load-status").textContent = "";

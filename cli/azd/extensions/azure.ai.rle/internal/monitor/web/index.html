@@ -27,6 +27,10 @@
       <p id="error-message" role="alert"></p>
       <button id="retry" type="button">Try again</button>
     </section>
+    <div id="job-tabs" class="tab-bar job-tab-bar" role="tablist" aria-label="Job views" hidden>
+      <button id="tab-metrics" role="tab" type="button" aria-selected="true" aria-controls="run-overview" tabindex="0">Metrics</button>
+      <button id="tab-rollouts" role="tab" type="button" aria-selected="false" aria-controls="rollout-list" tabindex="-1">Rollouts<span id="tab-rollouts-count" class="tab-count"></span></button>
+    </div>
     <section id="run-overview" class="panel" aria-labelledby="run-overview-title" hidden>
       <div class="list-heading">
         <div>
