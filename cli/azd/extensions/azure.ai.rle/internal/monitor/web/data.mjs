@@ -445,18 +445,18 @@ export const RUN_CHARTS = [
     ],
   },
   {
-    id: "stability",
-    title: "Gradient norm",
-    note: "The size of each update. A spike is an update large enough to move the policy somewhere "
-      + "it cannot recover from, and usually precedes a reward collapse on the next step.",
-    series: [{ key: "skyrl.ai/grad_norm", name: "Grad norm", tone: "negative" }],
-  },
-  {
-    id: "entropy",
-    title: "Policy entropy",
-    note: "How varied the sampled tokens are. Falling entropy is the policy committing; "
-      + "falling fast means it has stopped exploring and rewards will flatten.",
-    series: [{ key: "optim/entropy", name: "Entropy", tone: "primary" }],
+    id: "optim",
+    title: "Optim: grad norm · entropy · LR",
+    note: "Each series is scaled to its own range, because a learning rate of 4e-5 and a gradient norm "
+      + "of 1.2 share no axis. Hover for the real numbers. A grad-norm spike is an update large enough "
+      + "to move the policy somewhere it cannot recover from, and usually precedes a reward collapse on "
+      + "the next step. Entropy falling fast is the policy giving up exploring, after which reward flattens.",
+    scale: "independent",
+    series: [
+      { key: "skyrl.ai/grad_norm", name: "Grad norm", tone: "negative" },
+      { key: "optim/entropy", name: "Entropy", tone: "primary" },
+      { key: "optim/lr", name: "LR", tone: "accent" },
+    ],
   },
   {
     id: "divergence",
@@ -466,6 +466,65 @@ export const RUN_CHARTS = [
     series: [
       { key: "optim/kl_sample_train_v1", name: "KL v1", tone: "primary" },
       { key: "optim/kl_sample_train_v2", name: "KL v2", tone: "accent" },
+    ],
+  },
+  {
+    id: "validity",
+    title: "Validation validity",
+    note: "The share of validation rollouts the grader could actually score. This is the number to "
+      + "check before believing a flat reward curve: a low validity rate means the reward is being "
+      + "averaged over a handful of cases and the run is not being measured, only sampled.",
+    range: [0, 1],
+    series: [
+      { key: "rle_harness/validation_validity_rate", name: "Validity", tone: "primary" },
+    ],
+  },
+  {
+    id: "yield",
+    title: "Harness yield",
+    note: "Paths the harness kept against those it threw away. Discarded paths are rollouts that cost "
+      + "GPU time and taught nothing, so this is where a run silently gets expensive.",
+    series: [
+      { key: "env/all/rle_harness/trainable_roots", name: "Trainable", tone: "positive" },
+      { key: "env/all/rle_harness/discarded_paths", name: "Discarded", tone: "negative" },
+      { key: "env/all/rle_harness/auxiliary_paths", name: "Auxiliary", tone: "accent" },
+    ],
+  },
+  {
+    id: "truncation",
+    title: "Completion truncation",
+    note: "Rollouts that ran into the token ceiling. A rising fraction at max means answers are being "
+      + "cut off mid-thought and graded as failures, which looks identical to the policy getting worse.",
+    range: [0, 1],
+    series: [
+      { key: "env/all/ac_tokens_frac_at_max", name: "At max", tone: "negative" },
+      { key: "env/all/ac_tokens_frac_near_max", name: "Near max", tone: "accent" },
+    ],
+  },
+  {
+    id: "tokens",
+    title: "Token counts per turn",
+    note: "Generated and observed tokens per turn, with the turns each episode took. Scaled "
+      + "independently; hover for the real numbers. Rising tokens per turn at flat reward is the "
+      + "policy paying more for the same answer.",
+    scale: "independent",
+    series: [
+      { key: "env/all/ac_tokens_per_turn", name: "Generated", tone: "primary" },
+      { key: "env/all/ob_tokens_per_turn", name: "Observed", tone: "accent" },
+      { key: "env/all/turns_per_episode", name: "Turns", tone: "positive" },
+    ],
+  },
+  {
+    id: "timing",
+    title: "Step timing breakdown",
+    note: "Where each step's wall clock went. Training is the part that buys policy improvement; "
+      + "everything else is overhead, and eval time is what a shorter eval cadence would buy back.",
+    series: [
+      { key: "time/train", name: "Train", tone: "primary" },
+      { key: "time/run_evals", name: "Evals", tone: "accent" },
+      { key: "time/assemble_training_data", name: "Assemble", tone: "positive" },
+      { key: "time/compute_kl_sample_train", name: "KL", tone: "negative" },
+      { key: "time/save_checkpoint", name: "Checkpoint", tone: "muted" },
     ],
   },
 ];
@@ -561,15 +620,38 @@ export function chartGeometry(chart, width = 400, height = 160) {
   const spanY = maxValue - minValue || 1;
   const x = (step) => spanX === 0 ? 0 : (step - minStep) / spanX * width;
   const y = (value) => height - (value - minValue) / spanY * height;
+  // Metrics whose units have nothing to do with each other -- a learning rate
+  // of 4e-5 beside a gradient norm of 1.2 -- are each scaled to their own
+  // range. On a shared axis the smaller one is a flat line along the bottom
+  // and says nothing. The shape of each series is then honest but their
+  // heights are no longer comparable, so the value axis is dropped and the
+  // hover tooltip becomes the only place the real numbers are read.
+  const independent = chart.scale === "independent";
+  const scaleFor = (entry) => {
+    if (!independent) return y;
+    const own = entry.points.map((point) => point.value);
+    let low = Math.min(...own);
+    let high = Math.max(...own);
+    if (low === high) {
+      const padding = Math.abs(low) > 0 ? Math.abs(low) * 0.1 : 1;
+      low -= padding;
+      high += padding;
+    }
+    const span = high - low || 1;
+    return (value) => height - (value - low) / span * height;
+  };
   return {
-    width, height, minStep, maxStep, minValue, maxValue,
+    width, height, minStep, maxStep, minValue, maxValue, independent,
     xTicks: (spanX === 0 ? [minStep] : axisTicks(minStep, maxStep, 4, true))
       .map((step) => ({ value: step, x: x(step) })),
-    yTicks: axisTicks(minValue, maxValue, 4).map((value) => ({ value, y: y(value) })),
-    series: chart.series.map((entry) => ({
-      ...entry,
-      coordinates: entry.points.map((point) => ({ x: x(point.step), y: y(point.value), ...point })),
-    })),
+    yTicks: independent ? [] : axisTicks(minValue, maxValue, 4).map((value) => ({ value, y: y(value) })),
+    series: chart.series.map((entry) => {
+      const scale = scaleFor(entry);
+      return {
+        ...entry,
+        coordinates: entry.points.map((point) => ({ x: x(point.step), y: scale(point.value), ...point })),
+      };
+    }),
   };
 }
 
@@ -629,16 +711,16 @@ export function runHeadline(rows = []) {
     });
     return found;
   };
-  const headline = (label, key, format) => {
+  const headline = (label, key, format, steady = false) => {
     const found = readings(key);
     if (!found.length) return null;
     const latest = found[found.length - 1];
     const previous = found.length > 1 ? found[found.length - 2] : null;
     return {
-      label, key, format,
+      label, key, format, steady,
       value: latest.value,
       step: latest.step,
-      delta: previous ? latest.value - previous.value : null,
+      delta: previous && !steady ? latest.value - previous.value : null,
     };
   };
   return [
@@ -647,6 +729,10 @@ export function runHeadline(rows = []) {
     headline("Train reward", "env/all/reward/total", "reward"),
     headline("Mixed groups", "env/all/by_group/frac_mixed", "percent"),
     headline("Grad norm", "skyrl.ai/grad_norm", "reward"),
+    // Progress and elapsed are states, not trends: "+2.1% vs previous" on a
+    // clock that only ever counts up is noise, so they carry no delta.
+    headline("Progress", "progress/done_frac", "percent", true),
+    headline("Elapsed", "training_duration_s", "duration", true),
   ].filter(Boolean);
 }
 

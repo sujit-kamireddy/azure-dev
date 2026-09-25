@@ -422,6 +422,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 /* Training run view -------------------------------------------------------- */
 #run-overview { margin-bottom: 20px; }
 .metric-delta { font-size: 12px; font-weight: 600; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.metric-progress { height: 4px; border-radius: 2px; background: var(--line); margin-top: 6px; overflow: hidden; }
+.metric-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; }
 .metric-delta.rising { color: #1d6a51; }
 .metric-delta.falling { color: #974920; }
 .run-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0 28px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
@@ -456,10 +458,12 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 .tone-accent .legend-swatch { background: #8a5cd0; }
 .tone-positive .legend-swatch { background: #1d8a63; }
 .tone-negative .legend-swatch { background: #c2511f; }
+.tone-muted .legend-swatch { background: #6b7280; }
 path.tone-primary { stroke: #365edb; } circle.tone-primary { fill: #365edb; }
 path.tone-accent { stroke: #8a5cd0; } circle.tone-accent { fill: #8a5cd0; }
 path.tone-positive { stroke: #1d8a63; } circle.tone-positive { fill: #1d8a63; }
 path.tone-negative { stroke: #c2511f; } circle.tone-negative { fill: #c2511f; }
+path.tone-muted { stroke: #6b7280; } circle.tone-muted { fill: #6b7280; }
 .run-log { max-height: 420px; overflow: auto; margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 :where([data-theme="dark"]) .run-chart { background: #16202f; }
 :where([data-theme="dark"]) .chart-tooltip { background: #16202f; box-shadow: 0 8px 24px rgb(0 0 0 / 50%); }
@@ -469,7 +473,9 @@ path.tone-negative { stroke: #c2511f; } circle.tone-negative { fill: #c2511f; }
 :where([data-theme="dark"]) .tone-accent .legend-swatch { background: #c2a0f2; }
 :where([data-theme="dark"]) .tone-positive .legend-swatch { background: #6fd5b3; }
 :where([data-theme="dark"]) .tone-negative .legend-swatch { background: #f0a276; }
+:where([data-theme="dark"]) .tone-muted .legend-swatch { background: #9aa5b8; }
 :where([data-theme="dark"]) path.tone-primary { stroke: #7ca0ff; } :where([data-theme="dark"]) circle.tone-primary { fill: #7ca0ff; }
 :where([data-theme="dark"]) path.tone-accent { stroke: #c2a0f2; } :where([data-theme="dark"]) circle.tone-accent { fill: #c2a0f2; }
 :where([data-theme="dark"]) path.tone-positive { stroke: #6fd5b3; } :where([data-theme="dark"]) circle.tone-positive { fill: #6fd5b3; }
 :where([data-theme="dark"]) path.tone-negative { stroke: #f0a276; } :where([data-theme="dark"]) circle.tone-negative { fill: #f0a276; }
+:where([data-theme="dark"]) path.tone-muted { stroke: #9aa5b8; } :where([data-theme="dark"]) circle.tone-muted { fill: #9aa5b8; }

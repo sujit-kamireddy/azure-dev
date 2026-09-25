@@ -914,6 +914,17 @@ let hasRunView = false;
 function formatMetric(value, style) {
   if (!isNumber(value)) return "—";
   if (style === "percent") return `${(value * 100).toFixed(1)}%`;
+  // Seconds are read as a clock. Four thousand of them is 1h 6m to a human and
+  // an unparseable number of digits to everyone.
+  if (style === "duration") {
+    const total = Math.max(0, Math.round(value));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    if (hours) return `${hours}h ${minutes}m`;
+    if (minutes) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
+  }
   if (value === 0) return "0";
   if (Math.abs(value) >= 1000) return value.toFixed(0);
   // A learning rate of 4e-5 shown as "0.000" is a number nobody can act on.
@@ -937,6 +948,15 @@ function renderRunHeadline() {
     const card = element("div", undefined, "metric");
     card.append(element("p", formatMetric(entry.value, entry.format), "metric-value"));
     card.append(element("h2", entry.label));
+    // A fraction of the run completed is read faster as a bar than as a
+    // percentage, which is why loom's overview card carries one.
+    if (entry.key === "progress/done_frac" && isNumber(entry.value)) {
+      const track = element("div", undefined, "metric-progress");
+      const fill = element("div", undefined, "metric-progress-fill");
+      fill.style.width = `${Math.max(0, Math.min(1, entry.value)) * 100}%`;
+      track.append(fill);
+      card.append(track);
+    }
     // The direction of travel is the point; a bare number cannot show it.
     if (isNumber(entry.delta) && entry.delta !== 0) {
       const rising = entry.delta > 0;
