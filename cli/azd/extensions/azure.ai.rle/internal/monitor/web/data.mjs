@@ -500,6 +500,38 @@ export function runCharts(rows = [], specs = RUN_CHARTS) {
   return charts;
 }
 
+// Round a span down to a "nice" tick stride: 1, 2, 2.5 or 5 times a power of
+// ten. Plotly picks strides this way, and the reason is legibility -- an axis
+// labelled 0.25 / 0.50 / 0.75 is read at a glance where one labelled
+// 0.2833 / 0.5666 is not.
+function niceStride(span, target) {
+  if (!(span > 0) || !(target > 0)) return 0;
+  const rough = span / target;
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const normalised = rough / magnitude;
+  const stride = normalised <= 1 ? 1 : normalised <= 2 ? 2 : normalised <= 2.5 ? 2.5 : normalised <= 5 ? 5 : 10;
+  return stride * magnitude;
+}
+
+// Tick values across [min, max] on a nice stride.
+//
+// Steps are counts, so their axis is asked for whole numbers: a gridline at
+// "step 2.5" labels a step that was never run.
+function axisTicks(min, max, target, wholeNumbers = false) {
+  let stride = niceStride(max - min, target);
+  if (!stride) return [];
+  if (wholeNumbers) stride = Math.max(1, Math.round(stride));
+  const ticks = [];
+  // Accumulating a float stride drifts, so every tick is recomputed from the
+  // index instead. That is what keeps 0.30000000000000004 off the axis.
+  const first = Math.ceil(min / stride);
+  const last = Math.floor(max / stride);
+  for (let index = first; index <= last; index += 1) {
+    ticks.push(Number((index * stride).toPrecision(12)));
+  }
+  return ticks;
+}
+
 // chartGeometry places a panel's points in a fixed 400x160 viewBox.
 //
 // Held separately from the drawing so the arithmetic that decides whether a
@@ -531,6 +563,9 @@ export function chartGeometry(chart, width = 400, height = 160) {
   const y = (value) => height - (value - minValue) / spanY * height;
   return {
     width, height, minStep, maxStep, minValue, maxValue,
+    xTicks: (spanX === 0 ? [minStep] : axisTicks(minStep, maxStep, 4, true))
+      .map((step) => ({ value: step, x: x(step) })),
+    yTicks: axisTicks(minValue, maxValue, 4).map((value) => ({ value, y: y(value) })),
     series: chart.series.map((entry) => ({
       ...entry,
       coordinates: entry.points.map((point) => ({ x: x(point.step), y: y(point.value), ...point })),
@@ -542,6 +577,42 @@ export function chartPath(coordinates) {
   return coordinates
     .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
     .join(" ");
+}
+
+// Every series' reading at the step nearest an x position in the viewBox.
+//
+// Plotly calls this "x unified" hover, and it is the whole point of hovering a
+// training chart: the question being asked is "what did the other series do
+// when this one dipped", which a per-point tooltip can never answer because
+// only one point is ever under the cursor. Held here, beside the geometry, so
+// the lookup can be exercised without a DOM.
+//
+// Series are sparse and on different cadences -- validation is only measured
+// every few steps -- so a series with nothing at the chosen step is left out
+// rather than reported as a zero.
+export function chartHoverAt(geometry, x) {
+  if (!geometry || !isNumber(x)) return null;
+  let step = null;
+  let nearest = Infinity;
+  for (const entry of geometry.series) {
+    for (const point of entry.coordinates) {
+      const distance = Math.abs(point.x - x);
+      if (distance < nearest) {
+        nearest = distance;
+        step = point.step;
+      }
+    }
+  }
+  if (step === null) return null;
+  const readings = [];
+  let column = 0;
+  for (const entry of geometry.series) {
+    const point = entry.coordinates.find((candidate) => candidate.step === step);
+    if (!point) continue;
+    column = point.x;
+    readings.push({ name: entry.name, tone: entry.tone, value: point.value, x: point.x, y: point.y });
+  }
+  return readings.length ? { step, x: column, readings } : null;
 }
 
 // The headline numbers, with how far each has moved.

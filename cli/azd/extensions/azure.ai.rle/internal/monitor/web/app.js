@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import {
-  buildGraph, chartGeometry, chartPath, chartScales, fetchRolloutIndex, fetchRunLog, fetchRunMetrics,
+  buildGraph, chartGeometry, chartHoverAt, chartPath, chartScales, fetchRolloutIndex, fetchRunLog, fetchRunMetrics,
   fetchRunOverview, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
   runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage, TOKEN_PAGE_SIZE,
 } from "./data.mjs";
@@ -914,7 +914,12 @@ let hasRunView = false;
 function formatMetric(value, style) {
   if (!isNumber(value)) return "—";
   if (style === "percent") return `${(value * 100).toFixed(1)}%`;
-  return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toFixed(3);
+  if (value === 0) return "0";
+  if (Math.abs(value) >= 1000) return value.toFixed(0);
+  // A learning rate of 4e-5 shown as "0.000" is a number nobody can act on.
+  // Below the third decimal the exponent carries the information instead.
+  if (Math.abs(value) < 1e-3) return value.toExponential(2);
+  return value.toFixed(3);
 }
 
 // A change in a percentage is measured in points, not percent: success going
@@ -976,6 +981,95 @@ function chartLegend(geometry) {
   return legend;
 }
 
+// Axis labels are read at a glance, so they drop the trailing zeros the
+// tooltip keeps: a gridline reading "0.25" is clearer than "0.250", and the
+// exact value is one hover away.
+function formatTick(value) {
+  if (!isNumber(value)) return "";
+  if (value === 0) return "0";
+  if (Math.abs(value) >= 1000 || Math.abs(value) < 1e-3) return formatMetric(value);
+  return String(Number(value.toPrecision(6)));
+}
+
+// Room outside the plot area for the axis labels, in viewBox units.
+const CHART_GUTTER = { left: 46, right: 10, top: 8, bottom: 24 };
+
+// Translate a pointer event into viewBox coordinates.
+//
+// The plot is drawn at a fixed 400x160 but stretched to whatever width the
+// card ends up, so the browser letterboxes it. getScreenCTM is the only
+// mapping that survives that; ratios off getBoundingClientRect do not.
+function viewBoxPoint(svg, event) {
+  const matrix = svg.getScreenCTM();
+  if (!matrix) return null;
+  const point = svg.createSVGPoint();
+  point.x = event.clientX;
+  point.y = event.clientY;
+  return point.matrixTransform(matrix.inverse());
+}
+
+function chartTooltipRow(reading) {
+  // The tone lives on the row so the swatch can reuse the legend's colours,
+  // in both themes, without a second copy of the palette.
+  const row = element("div", undefined, `chart-tooltip-row tone-${reading.tone}`);
+  row.append(element("span", "", "legend-swatch"));
+  row.append(element("span", reading.name, "chart-tooltip-name"));
+  row.append(element("span", formatMetric(reading.value), "chart-tooltip-value"));
+  return row;
+}
+
+// Wire hover onto a drawn panel: a crosshair at the nearest step, every series
+// marked at that step, and one tooltip listing them all.
+function attachChartHover(panel, svg, geometry, markers, crosshair) {
+  const tooltip = element("div", undefined, "chart-tooltip");
+  tooltip.hidden = true;
+  panel.append(tooltip);
+
+  const clear = () => {
+    tooltip.hidden = true;
+    crosshair.setAttribute("visibility", "hidden");
+    markers.replaceChildren();
+  };
+
+  const move = (event) => {
+    const point = viewBoxPoint(svg, event);
+    const hover = point ? chartHoverAt(geometry, point.x) : null;
+    if (!hover) {
+      clear();
+      return;
+    }
+    crosshair.setAttribute("visibility", "visible");
+    crosshair.setAttribute("x1", hover.x);
+    crosshair.setAttribute("x2", hover.x);
+    markers.replaceChildren(...hover.readings.map((reading) => svgElement("circle", {
+      cx: reading.x, cy: reading.y, r: 4.5, class: `chart-marker tone-${reading.tone}`,
+    })));
+
+    tooltip.replaceChildren(element("p", `Step ${hover.step}`, "chart-tooltip-step"));
+    for (const reading of hover.readings) tooltip.append(chartTooltipRow(reading));
+    tooltip.hidden = false;
+
+    // Place it beside the cursor, flipping before it runs off the card rather
+    // than after, so the reading stays on screen at the right-hand edge.
+    const bounds = panel.getBoundingClientRect();
+    const x = event.clientX - bounds.left;
+    const y = event.clientY - bounds.top;
+    const width = tooltip.offsetWidth;
+    const height = tooltip.offsetHeight;
+    tooltip.style.left = `${x + width + 24 > bounds.width ? Math.max(4, x - width - 14) : x + 14}px`;
+    // Centred on the cursor rather than floated above it: anchoring it above
+    // parks the tooltip over the title and legend on every mid-height hover.
+    tooltip.style.top = `${Math.min(Math.max(4, y - height / 2), Math.max(4, bounds.height - height - 4))}px`;
+  };
+
+  svg.addEventListener("pointermove", move);
+  svg.addEventListener("pointerleave", clear);
+  // A touch drag reads the chart the same way a mouse does, but it never fires
+  // pointerleave, so the crosshair has to be taken down on release.
+  svg.addEventListener("pointercancel", clear);
+  svg.addEventListener("pointerup", clear);
+}
+
 function chartFigure(chart) {
   const geometry = chartGeometry(chart);
   if (!geometry) return null;
@@ -984,15 +1078,47 @@ function chartFigure(chart) {
   panel.append(chartLegend(geometry));
 
   const svg = svgElement("svg", {
-    viewBox: `-2 -6 ${geometry.width + 4} ${geometry.height + 12}`,
+    viewBox: `${-CHART_GUTTER.left} ${-CHART_GUTTER.top}`
+      + ` ${geometry.width + CHART_GUTTER.left + CHART_GUTTER.right}`
+      + ` ${geometry.height + CHART_GUTTER.top + CHART_GUTTER.bottom}`,
     class: "run-chart-plot", role: "img",
     "aria-label": `${chart.title} across steps ${geometry.minStep} to ${geometry.maxStep}`,
   });
-  // A zero line only means something on a chart that crosses it.
-  if (geometry.minValue < 0 && geometry.maxValue > 0) {
-    const zero = geometry.height - (0 - geometry.minValue) / (geometry.maxValue - geometry.minValue) * geometry.height;
-    svg.append(svgElement("line", { x1: 0, y1: zero, x2: geometry.width, y2: zero, class: "chart-zero" }));
+
+  for (const tick of geometry.yTicks) {
+    svg.append(svgElement("line", {
+      x1: 0, y1: tick.y, x2: geometry.width, y2: tick.y,
+      class: tick.value === 0 ? "chart-grid chart-zero" : "chart-grid",
+    }));
+    svg.append(svgElement("text", { x: -9, y: tick.y, class: "chart-tick chart-tick-y" },
+      formatTick(tick.value)));
   }
+  for (const tick of geometry.xTicks) {
+    svg.append(svgElement("line", {
+      x1: tick.x, y1: 0, x2: tick.x, y2: geometry.height, class: "chart-grid",
+    }));
+    svg.append(svgElement("text", { x: tick.x, y: geometry.height + 16, class: "chart-tick chart-tick-x" },
+      String(tick.value)));
+  }
+  svg.append(svgElement("text", {
+    x: geometry.width / 2, y: geometry.height + CHART_GUTTER.bottom, class: "chart-tick chart-axis-title",
+  }, "step"));
+
+  // An SVG only hit-tests painted children, so the empty space between the
+  // lines raises no pointer events at all. This unpainted rect exists purely
+  // to make the whole panel hoverable, which is how the cursor can read a step
+  // it happens not to be exactly on top of.
+  svg.append(svgElement("rect", {
+    x: -CHART_GUTTER.left, y: -CHART_GUTTER.top,
+    width: geometry.width + CHART_GUTTER.left + CHART_GUTTER.right,
+    height: geometry.height + CHART_GUTTER.top + CHART_GUTTER.bottom,
+    class: "chart-hit",
+  }));
+
+  const crosshair = svgElement("line", {
+    x1: 0, y1: 0, x2: 0, y2: geometry.height, class: "chart-crosshair", visibility: "hidden",
+  });
+  svg.append(crosshair);
   for (const entry of geometry.series) {
     svg.append(svgElement("path", {
       d: chartPath(entry.coordinates), class: `chart-line tone-${entry.tone}`, fill: "none",
@@ -1000,18 +1126,15 @@ function chartFigure(chart) {
     // Marking the points keeps a two-step run from looking like a bare line and
     // makes a single reading visible at all.
     for (const point of entry.coordinates) {
-      const dot = svgElement("circle", { cx: point.x, cy: point.y, r: 2.5, class: `chart-dot tone-${entry.tone}` });
-      dot.append(svgElement("title", {}, `Step ${point.step}: ${point.value}`));
-      svg.append(dot);
+      svg.append(svgElement("circle", { cx: point.x, cy: point.y, r: 2.5, class: `chart-dot tone-${entry.tone}` }));
     }
   }
-  panel.append(svg);
 
-  const axis = element("div", undefined, "chart-axis");
-  axis.append(element("span", formatMetric(geometry.minValue)), element("span", `step ${geometry.minStep}`));
-  axis.append(element("span", `step ${geometry.maxStep}`), element("span", formatMetric(geometry.maxValue)));
-  panel.append(axis);
+  const markers = svgElement("g", { class: "chart-markers" });
+  svg.append(markers);
+  panel.append(svg);
   panel.append(element("p", chart.note, "section-note"));
+  attachChartHover(panel, svg, geometry, markers, crosshair);
   return panel;
 }
 

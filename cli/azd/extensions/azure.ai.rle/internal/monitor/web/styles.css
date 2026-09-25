@@ -428,14 +428,27 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 .fact-group .field-list { grid-template-columns: minmax(90px, 1fr) minmax(0, 1fr); gap: 7px 14px; margin: 0; }
 .fact-group dd { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .run-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 20px; }
-.run-chart { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; background: #fcfdff; min-width: 0; }
+.run-chart { position: relative; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; background: #fcfdff; min-width: 0; }
 .run-chart h3 { font-size: 14px; font-weight: 650; }
 .run-chart .section-note { font-size: 12px; margin-top: 9px; line-height: 1.55; }
-.run-chart-plot { display: block; width: 100%; height: 150px; margin-top: 8px; overflow: visible; }
+.run-chart-plot { display: block; width: 100%; height: 168px; margin-top: 8px; overflow: visible; touch-action: none; }
 .chart-line { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .chart-dot { stroke: var(--surface); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.chart-zero { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
-.chart-axis { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart-grid { stroke: var(--line); stroke-width: 1; opacity: 0.55; vector-effect: non-scaling-stroke; }
+.chart-zero { opacity: 1; stroke-dasharray: 3 3; }
+.chart-tick { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.chart-tick-y { text-anchor: end; dominant-baseline: middle; }
+.chart-tick-x { text-anchor: middle; }
+.chart-axis-title { text-anchor: middle; font-size: 10px; letter-spacing: 0.04em; }
+.chart-crosshair { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.8; pointer-events: none; vector-effect: non-scaling-stroke; }
+/* Unpainted, but hit-tested: pointer-events:all is what makes empty plot area hoverable. */
+.chart-hit { fill: none; pointer-events: all; }
+.chart-marker { stroke: var(--surface); stroke-width: 2; pointer-events: none; vector-effect: non-scaling-stroke; }
+/* Follows the cursor, so it must never sit under it and re-trigger the move. */
+.chart-tooltip { position: absolute; z-index: 20; pointer-events: none; min-width: 132px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); box-shadow: 0 8px 22px rgb(15 23 42 / 18%); font-size: 12px; line-height: 1.5; }
+.chart-tooltip-step { margin: 0 0 5px; font-weight: 650; font-size: 11px; color: var(--muted); letter-spacing: 0.03em; }
+.chart-tooltip-row { display: grid; grid-template-columns: 11px 1fr auto; align-items: center; gap: 8px; }
+.chart-tooltip-value { font-variant-numeric: tabular-nums; font-weight: 600; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .legend-series { display: inline-flex; align-items: center; gap: 6px; }
 .legend-swatch { width: 11px; height: 3px; border-radius: 2px; }
@@ -449,6 +462,7 @@ path.tone-positive { stroke: #1d8a63; } circle.tone-positive { fill: #1d8a63; }
 path.tone-negative { stroke: #c2511f; } circle.tone-negative { fill: #c2511f; }
 .run-log { max-height: 420px; overflow: auto; margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 :where([data-theme="dark"]) .run-chart { background: #16202f; }
+:where([data-theme="dark"]) .chart-tooltip { background: #16202f; box-shadow: 0 8px 24px rgb(0 0 0 / 50%); }
 :where([data-theme="dark"]) .metric-delta.rising { color: #98e2c5; }
 :where([data-theme="dark"]) .metric-delta.falling { color: #f1c29b; }
 :where([data-theme="dark"]) .tone-primary .legend-swatch { background: #7ca0ff; }
