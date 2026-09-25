@@ -2,6 +2,16 @@
 // Posts a comment if no issue is found and fails the check.
 module.exports = async ({ github, context, core }) => {
   const pr = context.payload.pull_request;
+  const canonicalRepo = { owner: 'Azure', repo: 'azure-dev' };
+
+  if (context.repo.owner !== canonicalRepo.owner || context.repo.repo !== canonicalRepo.repo) {
+    console.log(
+      `Skipping: PR governance is enforced only for ${canonicalRepo.owner}/${canonicalRepo.repo}, not ` +
+      `${context.repo.owner}/${context.repo.repo}`
+    );
+    core.setOutput('skipped', 'true');
+    return;
+  }
 
   // Skip for draft PRs
   if (pr.draft) {
