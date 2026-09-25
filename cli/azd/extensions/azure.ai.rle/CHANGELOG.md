@@ -1,6 +1,14 @@
 # Release History
 
-## Unreleased
+## 0.8.16-preview
+
+- `azd ai rle rollout` now negotiates the v2 Execute Rollout WebSocket
+  protocol and rotates submission connections during service deployments.
+  Existing rollouts continue collecting progress and terminal results on their
+  original draining connection while new work uses a replacement. Explicit
+  `ServerDraining` rejections are retried with the same rollout ID, but
+  ambiguous sends, disconnects, `ServerShuttingDown`, and duplicate rollout
+  IDs are never replayed. V1 services remain supported.
 
 - The job dashboard now shows the training run, not only the rollouts it
   recorded. `train --follow` already mirrors a run's artifacts locally; the
