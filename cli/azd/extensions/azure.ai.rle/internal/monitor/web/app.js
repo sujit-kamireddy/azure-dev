@@ -817,9 +817,9 @@ function applyMonitorTitle(jobID) {
   if (brand) {
     const name = brand.querySelector("span:last-child");
     if (name) name.textContent = label;
-    brand.setAttribute("aria-label", `RLE ${label.toLowerCase()} home`);
+    brand.setAttribute("aria-label", `Foundry RLE ${label.toLowerCase()} home`);
   }
-  document.title = jobID ? `RLE job monitor · ${jobID}` : "RLE rollout monitor";
+  document.title = jobID ? `Foundry RLE job monitor · ${jobID}` : "Foundry RLE rollout monitor";
 }
 
 function renderRolloutList() {
