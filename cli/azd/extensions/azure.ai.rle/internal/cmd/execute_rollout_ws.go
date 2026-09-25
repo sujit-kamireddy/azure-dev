@@ -18,10 +18,20 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// executeRolloutSubprotocol is offered in Sec-WebSocket-Protocol and selected by the
-// service. An upgrade that does not offer it is rejected before the socket is accepted
-// (vienna EntryPoints/Controllers/V1/ExecuteRolloutController.cs ExecuteRolloutWebSocketAsync).
-const executeRolloutSubprotocol = "rle.execute-rollout.v1"
+// Execute Rollout v2 adds connection-level deployment-drain notifications. V1 remains
+// available for services that have not deployed the rotation protocol yet.
+const (
+	executeRolloutSubprotocolV2 = "rle.execute-rollout.v2"
+	executeRolloutSubprotocolV1 = "rle.execute-rollout.v1"
+
+	// Retained for tests and callers that specifically exercise the original protocol.
+	executeRolloutSubprotocol = executeRolloutSubprotocolV1
+)
+
+var executeRolloutSubprotocols = []string{
+	executeRolloutSubprotocolV2,
+	executeRolloutSubprotocolV1,
+}
 
 // executeRolloutWebSocketGroupID is the reserved, literal instance_groups segment RLE
 // publishes the rollout upgrade under. The Foundry data-plane gateway forwards a WebSocket
@@ -53,13 +63,19 @@ const (
 	executeRolloutFrameProgress  = "progress"
 	executeRolloutFrameCompleted = "completed"
 	executeRolloutFrameError     = "error"
+	executeRolloutFrameDraining  = "server-draining"
 )
 
-// executeRolloutFrameHeader is the JSON header of an application message. The header owns
-// rollout_id: the service rejects a payload whose rollout_id disagrees with it.
+// executeRolloutFrameHeader is the JSON header of an application message. Rollout messages
+// own rollout_id; v2 connection-level messages, such as server-draining, intentionally omit it.
 type executeRolloutFrameHeader struct {
 	Type      string `json:"type"`
-	RolloutID string `json:"rollout_id"`
+	RolloutID string `json:"rollout_id,omitempty"`
+}
+
+type executeRolloutDrainNotification struct {
+	DrainTimeoutSeconds int `json:"drain_timeout_seconds"`
+	RetryAfterSeconds   int `json:"retry_after_seconds"`
 }
 
 // dialExecuteRolloutWebSocket is the dial seam. gorilla's Dialer does not run through
@@ -71,7 +87,7 @@ var dialExecuteRolloutWebSocket = func(
 ) (*websocket.Conn, *http.Response, error) {
 	dialer := &websocket.Dialer{
 		HandshakeTimeout: executeRolloutHandshakeTimeout,
-		Subprotocols:     []string{executeRolloutSubprotocol},
+		Subprotocols:     executeRolloutSubprotocols,
 		Proxy:            http.ProxyFromEnvironment,
 	}
 	return dialer.DialContext(ctx, endpoint, headers)
@@ -139,10 +155,9 @@ func (c *rleClient) executeRolloutWebSocketURL(
 	return endpoint.String(), nil
 }
 
-// executeRolloutOverWebSocket runs one rollout on a dedicated connection. The CLI executes a
-// single rollout per invocation, so the socket is opened, used and closed here; the wire
-// format supports several concurrent rollouts on one connection, which a batching caller
-// would use by keeping the connection and dispatching replies by rollout_id.
+// executeRolloutOverWebSocket uses the connection manager even for the command's single
+// rollout. Keeping the single-rollout API here preserves the HTTP fallback boundary while
+// the manager can retain draining sockets and rotate new submissions to replacements.
 func (c *rleClient) executeRolloutOverWebSocket(
 	ctx context.Context,
 	environmentName string,
@@ -151,140 +166,15 @@ func (c *rleClient) executeRolloutOverWebSocket(
 	request executeRolloutRequest,
 	onProgress func(executeRolloutProgress) error,
 ) (*executeRolloutResponse, error) {
-	endpoint, err := c.executeRolloutWebSocketURL(environmentName, environmentVersion, request.RolloutID)
-	if err != nil {
-		return nil, err
-	}
-	authorization, err := c.authorizationHeader(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("authenticate to Foundry: %w", err)
-	}
-
-	headers := http.Header{}
-	headers.Set("Authorization", authorization)
-	headers.Set(executeRolloutHeader, loomBearerToken)
-
-	connection, response, err := dialExecuteRolloutWebSocket(ctx, endpoint, headers)
-	if err != nil {
-		return nil, newExecuteRolloutHandshakeError(err, response)
-	}
-	closeCode := websocket.CloseGoingAway
-	closeReason := "RLE CLI ended the rollout connection."
-	defer func() {
-		closeExecuteRolloutWebSocket(connection, closeCode, closeReason)
-	}()
-
-	// A 101 alone does not prove RLE answered: the upgrade path is shared with the OpenEnv
-	// instance template, and a server that ignores the offered subprotocol still completes
-	// the handshake. Require the negotiated value before writing, so a wrong handler is a
-	// handshake failure rather than a rollout submitted into the void. Nothing has been
-	// sent yet, so this stays safe to retry on HTTP.
-	if negotiated := connection.Subprotocol(); negotiated != executeRolloutSubprotocol {
-		return nil, newExecuteRolloutHandshakeError(fmt.Errorf(
-			"server did not select the %q subprotocol (got %q)",
-			executeRolloutSubprotocol, negotiated,
-		), nil)
-	}
-
-	connection.SetReadLimit(maxExecuteRolloutFrameBytes)
-
-	// gorilla honors the context during the handshake only. Tripping the read deadline is
-	// what unblocks the read below when the caller cancels.
-	finished := make(chan struct{})
-	defer close(finished)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = connection.SetReadDeadline(time.Now())
-		case <-finished:
-		}
-	}()
-
-	frame, err := encodeExecuteRolloutFrame(
-		executeRolloutFrameHeader{Type: executeRolloutFrameExecute, RolloutID: request.RolloutID},
-		request,
+	manager := newExecuteRolloutConnectionManager(
+		ctx,
+		c,
+		environmentName,
+		environmentVersion,
+		loomBearerToken,
 	)
-	if err != nil {
-		return nil, err
-	}
-	if err := connection.SetWriteDeadline(time.Now().Add(executeRolloutWriteTimeout)); err != nil {
-		return nil, fmt.Errorf("send Execute Rollout request: %w", err)
-	}
-	if err := connection.WriteMessage(websocket.BinaryMessage, frame); err != nil {
-		return nil, fmt.Errorf("send Execute Rollout request: %w", err)
-	}
-
-	var lastProgressSequence int64
-
-	// Stay in the read: a connection with no read in progress does not answer the server's
-	// keepalive pings, and a rollout can run for minutes between frames.
-	for {
-		messageType, message, err := connection.ReadMessage()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			return nil, fmt.Errorf("read Execute Rollout response: %w", err)
-		}
-		if messageType != websocket.BinaryMessage {
-			continue
-		}
-		header, payload, err := decodeExecuteRolloutFrame(message)
-		if err != nil {
-			return nil, err
-		}
-		if header.RolloutID != request.RolloutID {
-			// One rollout per connection here, so anything else is not ours.
-			continue
-		}
-		switch header.Type {
-		case executeRolloutFrameProgress:
-			progress, err := decodeExecuteRolloutProgress(payload, request.RolloutID, lastProgressSequence)
-			if err != nil {
-				return nil, err
-			}
-			lastProgressSequence = progress.Sequence
-			if onProgress != nil {
-				if err := onProgress(progress); err != nil {
-					return nil, fmt.Errorf("write Execute Rollout progress: %w", err)
-				}
-			}
-		case executeRolloutFrameCompleted:
-			var result executeRolloutResponse
-			if err := json.Unmarshal(payload, &result); err != nil {
-				return nil, fmt.Errorf("decode RLE response: %w", err)
-			}
-			closeCode = websocket.CloseNormalClosure
-			closeReason = "RLE rollout complete."
-			return &result, nil
-		case executeRolloutFrameError:
-			closeCode = websocket.CloseNormalClosure
-			closeReason = "RLE rollout completed with an error."
-			return nil, newExecuteRolloutFrameError(payload)
-		default:
-			continue
-		}
-	}
-}
-
-// closeExecuteRolloutWebSocket completes the WebSocket close handshake when possible.
-// Conn.Close alone closes the network connection without sending a close frame, which
-// causes the peer to observe an abnormal closure even after a completed rollout.
-func closeExecuteRolloutWebSocket(connection *websocket.Conn, code int, reason string) {
-	deadline := time.Now().Add(executeRolloutCloseTimeout)
-	if err := connection.WriteControl(
-		websocket.CloseMessage,
-		websocket.FormatCloseMessage(code, reason),
-		deadline,
-	); err == nil {
-		_ = connection.SetReadDeadline(deadline)
-		for {
-			if _, _, err := connection.ReadMessage(); err != nil {
-				break
-			}
-		}
-	}
-	_ = connection.Close()
+	defer manager.Close()
+	return manager.Execute(ctx, request, onProgress)
 }
 
 // newExecuteRolloutFrameError converts an error frame into the same error type the HTTP
@@ -344,6 +234,12 @@ func decodeExecuteRolloutFrame(frame []byte) (executeRolloutFrameHeader, []byte,
 	}
 	if err := json.Unmarshal(frame[4:4+headerLength], &header); err != nil {
 		return header, nil, fmt.Errorf("decode Execute Rollout frame header: %w", err)
+	}
+	if strings.TrimSpace(header.Type) == "" {
+		return header, nil, errors.New("Execute Rollout frame header is missing type")
+	}
+	if header.Type != executeRolloutFrameDraining && strings.TrimSpace(header.RolloutID) == "" {
+		return header, nil, fmt.Errorf("Execute Rollout %s frame header is missing rollout_id", header.Type)
 	}
 	return header, frame[4+headerLength:], nil
 }
