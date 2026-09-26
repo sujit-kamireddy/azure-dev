@@ -38,7 +38,7 @@ label { font-size: 14px; font-weight: 600; }
 .skip-link:focus { top: 10px; }
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 17px max(28px, calc((100% - 1312px) / 2)); border-bottom: 1px solid var(--line); background: #ffffffed; }
 .brand { display: flex; align-items: center; gap: 15px; color: #24304a; text-decoration: none; font-size: 16px; font-weight: 650; }
-.brand-mark { font-family: ui-monospace, Consolas, monospace; font-weight: 800; letter-spacing: -2px; font-size: 23px; color: #315ada; }
+.brand-mark { font-family: ui-monospace, Consolas, monospace; font-weight: 800; letter-spacing: -1px; font-size: 23px; color: #315ada; }
 .local-label { color: var(--muted); font-size: 12px; letter-spacing: 1.5px; }
 .header-controls { display: flex; align-items: center; gap: 18px; }
 #theme-toggle { min-width: 90px; white-space: nowrap; }
@@ -435,11 +435,15 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 .run-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0 28px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
 .fact-group .field-list { grid-template-columns: minmax(90px, 1fr) minmax(0, 1fr); gap: 7px 14px; margin: 0; }
 .fact-group dd { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.run-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 20px; }
+.run-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 20px; }
+@media (max-width: 760px) { .run-charts { grid-template-columns: minmax(0, 1fr); } }
 .run-chart { position: relative; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; background: #fcfdff; min-width: 0; }
 .run-chart h3 { font-size: 14px; font-weight: 650; }
 .run-chart .section-note { font-size: 12px; margin-top: 9px; line-height: 1.55; }
-.run-chart-plot { display: block; width: 100%; height: 168px; margin-top: 8px; overflow: visible; touch-action: none; cursor: pointer; }
+/* The plot letterboxes to its viewBox, so a fixed height would leave the wider
+   two-up card padded with dead space instead of a bigger chart. Matching the
+   456x192 viewBox lets it fill the card at whatever width the card lands on. */
+.run-chart-plot { display: block; width: 100%; aspect-ratio: 456 / 192; margin-top: 8px; overflow: visible; touch-action: none; cursor: pointer; }
 .chart-line { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .chart-dot { stroke: var(--surface); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .chart-grid { stroke: var(--line); stroke-width: 1; opacity: 0.55; vector-effect: non-scaling-stroke; }
@@ -470,7 +474,9 @@ path.tone-accent { stroke: #8a5cd0; } circle.tone-accent { fill: #8a5cd0; }
 path.tone-positive { stroke: #1d8a63; } circle.tone-positive { fill: #1d8a63; }
 path.tone-negative { stroke: #c2511f; } circle.tone-negative { fill: #c2511f; }
 path.tone-muted { stroke: #6b7280; } circle.tone-muted { fill: #6b7280; }
-.run-log { max-height: 420px; overflow: auto; margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* On its own tab the log is the whole view, so it takes the window rather than
+   the 420px it was given as one disclosure among others on the metrics page. */
+.run-log { max-height: 62vh; min-height: 260px; overflow: auto; margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 :where([data-theme="dark"]) .run-chart { background: #16202f; }
 :where([data-theme="dark"]) .chart-tooltip { background: #16202f; box-shadow: 0 8px 24px rgb(0 0 0 / 50%); }
 :where([data-theme="dark"]) .metric-delta.rising { color: #98e2c5; }

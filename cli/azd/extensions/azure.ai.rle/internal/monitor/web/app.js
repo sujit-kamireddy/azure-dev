@@ -156,11 +156,12 @@ function selectTab(name, focus = false) {
   }
   if (name === "tokens") renderSequence();
   // A hidden panel is not redrawn while it polls, so it is redrawn on the way in.
-  if (name === "metrics" || name === "rollouts") {
+  if (JOB_TABS.has(name)) {
     activeJobTab = name;
     rememberJobTab(name);
     if (name === "metrics" && runOverview) renderRunView();
     if (name === "rollouts" && rolloutIndex) renderRolloutList();
+    if (name === "logs") void refreshRunLog();
   }
 }
 
@@ -763,10 +764,11 @@ let rolloutIndex = null;
 // A job monitor is left open and reloaded, so the view being watched outlives a
 // refresh. Session storage can be barred outright, which is not worth failing over.
 const JOB_TAB_KEY = "rle-monitor-job-tab";
+const JOB_TABS = new Set(["metrics", "rollouts", "logs"]);
 let activeJobTab = "metrics";
 try {
   const stored = sessionStorage.getItem(JOB_TAB_KEY);
-  if (stored === "metrics" || stored === "rollouts") activeJobTab = stored;
+  if (JOB_TABS.has(stored)) activeJobTab = stored;
 } catch { /* storage is unavailable; the default view still works */ }
 
 function rememberJobTab(name) {
@@ -817,9 +819,9 @@ function applyMonitorTitle(jobID) {
   if (brand) {
     const name = brand.querySelector("span:last-child");
     if (name) name.textContent = label;
-    brand.setAttribute("aria-label", `RLE ${label.toLowerCase()} home`);
+    brand.setAttribute("aria-label", `Foundry RLE ${label.toLowerCase()} home`);
   }
-  document.title = jobID ? `RLE job monitor · ${jobID}` : "RLE rollout monitor";
+  document.title = jobID ? `Foundry RLE job monitor · ${jobID}` : "Foundry RLE rollout monitor";
 }
 
 function renderRolloutList() {
@@ -867,7 +869,7 @@ function showRolloutList() {
   // local mirror has rollouts and nothing else, and is shown as the plain list.
   const tabbed = hasRunView;
   byID("job-tabs").hidden = !tabbed;
-  for (const id of ["run-overview", "rollout-list"]) {
+  for (const id of ["run-overview", "rollout-list", "run-log"]) {
     if (tabbed) byID(id).setAttribute("role", "tabpanel");
     else byID(id).removeAttribute("role");
   }
@@ -876,6 +878,7 @@ function showRolloutList() {
   } else {
     byID("rollout-list").hidden = false;
     byID("run-overview").hidden = true;
+    byID("run-log").hidden = true;
     renderRolloutList();
   }
   byID("load-status").className = "sr-only";
@@ -913,6 +916,7 @@ async function openRollout(rolloutID) {
     byID("job-tabs").hidden = true;
     byID("rollout-list").hidden = true;
     byID("run-overview").hidden = true;
+    byID("run-log").hidden = true;
     byID("back-to-list").hidden = false;
     byID("main").focus();
   } catch (error) {
@@ -1274,8 +1278,8 @@ function appendRunLog(tail) {
   runLogOffset = isNumber(tail.offset) ? tail.offset : runLogOffset;
   byID("run-log-size").textContent = isNumber(tail.size) && tail.size > 0
     ? `· ${count(Math.round(tail.size / 1024))} KB written` : "";
-  const panel = byID("run-log-panel");
-  if (panel.open && view.scrollHeight - view.scrollTop - view.clientHeight < 80) {
+  const panel = byID("run-log");
+  if (!panel.hidden && view.scrollHeight - view.scrollTop - view.clientHeight < 80) {
     view.scrollTop = view.scrollHeight;
   }
 }
@@ -1316,16 +1320,15 @@ async function pollRunView() {
   await refreshRunMetrics();
   // Metrics are kept current whichever tab is up, so switching to the charts
   // shows the run as it is now rather than as it was when the tab was left.
-  if (byID("run-overview").hidden) return;
-  renderRunView();
+  if (!byID("run-overview").hidden) renderRunView();
   await refreshRunLog();
 }
 
 // The log is only read while it is being looked at. It is the largest artifact
-// by far, and a closed panel polling it would cost more than everything else
+// by far, and a background tab polling it would cost more than everything else
 // on the page put together.
 async function refreshRunLog() {
-  if (!byID("run-log-panel").open) return;
+  if (byID("run-log").hidden) return;
   try {
     appendRunLog(await fetchRunLog(fetch, runLogOffset));
   } catch {
@@ -1352,9 +1355,7 @@ async function load() {
     }
     setSnapshot(await fetchSnapshot());
   } catch (error) {
-    byID("snapshot").hidden = true;
-    byID("job-tabs").hidden = true;
-    byID("rollout-list").hidden = true;
+    for (const id of ["snapshot", "job-tabs", "rollout-list", "run-overview", "run-log"]) byID(id).hidden = true;
     byID("load-status").className = "sr-only";
     byID("load-status").textContent = "";
     byID("load-error").hidden = false;
@@ -1371,7 +1372,6 @@ byID("back-button").addEventListener("click", () => {
 });
 byID("list-split").addEventListener("change", renderRolloutList);
 byID("list-step").addEventListener("change", renderRolloutList);
-byID("run-log-panel").addEventListener("toggle", refreshRunLog);
 
 byID("retry").addEventListener("click", load);
 byID("final-response-toggle").addEventListener("click", () => {
