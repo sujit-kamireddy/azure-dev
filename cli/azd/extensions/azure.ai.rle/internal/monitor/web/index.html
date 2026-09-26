@@ -30,6 +30,7 @@
     <div id="job-tabs" class="tab-bar job-tab-bar" role="tablist" aria-label="Job views" hidden>
       <button id="tab-metrics" role="tab" type="button" aria-selected="true" aria-controls="run-overview" tabindex="0">Metrics</button>
       <button id="tab-rollouts" role="tab" type="button" aria-selected="false" aria-controls="rollout-list" tabindex="-1">Rollouts<span id="tab-rollouts-count" class="tab-count"></span></button>
+      <button id="tab-logs" role="tab" type="button" aria-selected="false" aria-controls="run-log" tabindex="-1">Logs</button>
     </div>
     <section id="run-overview" class="panel" aria-labelledby="run-overview-title" hidden>
       <div class="list-heading">
@@ -43,11 +44,15 @@
       <section id="run-headline" class="metrics" aria-label="Latest training metrics"></section>
       <div id="run-facts" class="run-facts"></div>
       <div id="run-charts" class="run-charts"></div>
-      <details id="run-log-panel" class="detail-section">
-        <summary>Run log <span id="run-log-size" class="muted"></span></summary>
-        <p class="section-note">The tail of the log this run has written so far.</p>
-        <pre id="run-log-text" class="run-log" tabindex="0" role="region" aria-label="Training run log"></pre>
-      </details>
+    </section>
+    <section id="run-log" class="panel" aria-labelledby="run-log-title" hidden>
+      <div class="list-heading">
+        <div>
+          <h2 id="run-log-title">Run log</h2>
+          <p class="muted">The tail of the log this run has written so far <span id="run-log-size"></span></p>
+        </div>
+      </div>
+      <pre id="run-log-text" class="run-log" tabindex="0" role="region" aria-label="Training run log"></pre>
     </section>
     <section id="rollout-list" class="panel" aria-labelledby="rollout-list-title" hidden>
       <div class="list-heading">
