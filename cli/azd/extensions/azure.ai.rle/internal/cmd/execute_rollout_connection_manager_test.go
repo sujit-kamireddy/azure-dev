@@ -46,6 +46,20 @@ func TestDecodeExecuteRolloutDrainFrameWithoutRolloutID(t *testing.T) {
 	}
 }
 
+func TestExecuteRolloutRequestOmitsUnsetJobID(t *testing.T) {
+	payload, err := json.Marshal(executeRolloutRequest{RolloutID: "abc123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := body["job_id"]; found {
+		t.Fatal("job_id must be omitted when it is unset")
+	}
+}
+
 func TestExecuteRolloutNegotiatesV1AndV2(t *testing.T) {
 	for _, protocol := range executeRolloutSubprotocols {
 		t.Run(protocol, func(t *testing.T) {
@@ -59,7 +73,10 @@ func TestExecuteRolloutNegotiatesV1AndV2(t *testing.T) {
 					return
 				}
 				defer connection.Close()
-				header, _ := readExecuteRolloutTestRequest(t, connection)
+				header, request := readExecuteRolloutTestRequest(t, connection)
+				if request.JobID != "ftjob-abc123" {
+					t.Errorf("job_id = %q, want ftjob-abc123", request.JobID)
+				}
 				writeExecuteRolloutTestFrame(t, connection, executeRolloutFrameHeader{
 					Type:      executeRolloutFrameCompleted,
 					RolloutID: header.RolloutID,
@@ -77,7 +94,7 @@ func TestExecuteRolloutNegotiatesV1AndV2(t *testing.T) {
 				"code_rl",
 				"1.0.0",
 				"loom-token",
-				executeRolloutRequest{RolloutID: "abc123"},
+				executeRolloutRequest{RolloutID: "abc123", JobID: "ftjob-abc123"},
 				nil,
 			)
 			if err != nil {

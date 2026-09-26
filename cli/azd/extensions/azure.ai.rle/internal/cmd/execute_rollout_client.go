@@ -64,6 +64,7 @@ type rolloutSamplingOptions struct {
 // input required only by Harness targets.
 type executeRolloutRequest struct {
 	RolloutID  string                  `json:"rollout_id"`
+	JobID      string                  `json:"job_id,omitempty"`
 	Task       json.RawMessage         `json:"task,omitempty"`
 	AgentInput json.RawMessage         `json:"agent_input,omitempty"`
 	Policy     *rolloutPolicy          `json:"policy,omitempty"`
