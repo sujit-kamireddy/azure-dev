@@ -474,7 +474,9 @@ path.tone-accent { stroke: #8a5cd0; } circle.tone-accent { fill: #8a5cd0; }
 path.tone-positive { stroke: #1d8a63; } circle.tone-positive { fill: #1d8a63; }
 path.tone-negative { stroke: #c2511f; } circle.tone-negative { fill: #c2511f; }
 path.tone-muted { stroke: #6b7280; } circle.tone-muted { fill: #6b7280; }
-.run-log { max-height: 420px; overflow: auto; margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* On its own tab the log is the whole view, so it takes the window rather than
+   the 420px it was given as one disclosure among others on the metrics page. */
+.run-log { max-height: 62vh; min-height: 260px; overflow: auto; margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 :where([data-theme="dark"]) .run-chart { background: #16202f; }
 :where([data-theme="dark"]) .chart-tooltip { background: #16202f; box-shadow: 0 8px 24px rgb(0 0 0 / 50%); }
 :where([data-theme="dark"]) .metric-delta.rising { color: #98e2c5; }
