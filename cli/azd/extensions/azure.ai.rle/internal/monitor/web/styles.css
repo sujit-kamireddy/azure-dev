@@ -38,7 +38,7 @@ label { font-size: 14px; font-weight: 600; }
 .skip-link:focus { top: 10px; }
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 17px max(28px, calc((100% - 1312px) / 2)); border-bottom: 1px solid var(--line); background: #ffffffed; }
 .brand { display: flex; align-items: center; gap: 15px; color: #24304a; text-decoration: none; font-size: 16px; font-weight: 650; }
-.brand-mark { font-family: ui-monospace, Consolas, monospace; font-weight: 800; letter-spacing: -2px; font-size: 23px; color: #315ada; }
+.brand-mark { font-family: ui-monospace, Consolas, monospace; font-weight: 800; letter-spacing: -1px; font-size: 23px; color: #315ada; }
 .local-label { color: var(--muted); font-size: 12px; letter-spacing: 1.5px; }
 .header-controls { display: flex; align-items: center; gap: 18px; }
 #theme-toggle { min-width: 90px; white-space: nowrap; }
@@ -117,6 +117,11 @@ summary:hover { color: var(--accent); }
 .tab-bar button[aria-selected="true"] { color: #315cda; border-bottom-color: #4e74e4; }
 .tab-bar button:hover { color: #315cda; }
 .tab-bar button:focus-visible { outline-offset: -5px; }
+/* The job tab bar is its own card above the panels it switches between, where
+   the rollout detail bar is the top edge of the card it belongs to. */
+.job-tab-bar { border: 1px solid var(--line); border-radius: 15px; margin-bottom: 18px; }
+.tab-count { margin-left: 7px; padding: 2px 7px; border-radius: 9px; background: var(--line); color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tab-bar button[aria-selected="true"] .tab-count { background: #e4ebfd; color: #315cda; }
 .explorer-heading { padding: 23px 24px 17px; display: flex; justify-content: space-between; gap: 16px; align-items: center; }
 .graph-legend { display: flex; gap: 13px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
 .graph-legend span::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; }
@@ -305,6 +310,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 :where([data-theme="dark"]) .tab-bar button { color: var(--muted); }
 :where([data-theme="dark"]) .tab-bar button[aria-selected="true"],
 :where([data-theme="dark"]) .tab-bar button:hover { color: var(--accent); border-bottom-color: var(--accent); }
+:where([data-theme="dark"]) .tab-bar button[aria-selected="true"] .tab-count { background: #2b3c5c; color: var(--accent); }
 :where([data-theme="dark"]) .graph-canvas { background-color: #141d2c; background-image: radial-gradient(#3b4e70 0.65px, transparent 0.65px); }
 :where([data-theme="dark"]) .graph-edge { stroke: #7e94bb; }
 :where([data-theme="dark"]) .arrow-head { fill: #7e94bb; }
@@ -422,16 +428,22 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 /* Training run view -------------------------------------------------------- */
 #run-overview { margin-bottom: 20px; }
 .metric-delta { font-size: 12px; font-weight: 600; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.metric-progress { height: 4px; border-radius: 2px; background: var(--line); margin-top: 6px; overflow: hidden; }
+.metric-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; }
 .metric-delta.rising { color: #1d6a51; }
 .metric-delta.falling { color: #974920; }
 .run-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0 28px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
 .fact-group .field-list { grid-template-columns: minmax(90px, 1fr) minmax(0, 1fr); gap: 7px 14px; margin: 0; }
 .fact-group dd { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.run-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 20px; }
+.run-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 20px; }
+@media (max-width: 760px) { .run-charts { grid-template-columns: minmax(0, 1fr); } }
 .run-chart { position: relative; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; background: #fcfdff; min-width: 0; }
 .run-chart h3 { font-size: 14px; font-weight: 650; }
 .run-chart .section-note { font-size: 12px; margin-top: 9px; line-height: 1.55; }
-.run-chart-plot { display: block; width: 100%; height: 168px; margin-top: 8px; overflow: visible; touch-action: none; }
+/* The plot letterboxes to its viewBox, so a fixed height would leave the wider
+   two-up card padded with dead space instead of a bigger chart. Matching the
+   456x192 viewBox lets it fill the card at whatever width the card lands on. */
+.run-chart-plot { display: block; width: 100%; aspect-ratio: 456 / 192; margin-top: 8px; overflow: visible; touch-action: none; cursor: pointer; }
 .chart-line { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .chart-dot { stroke: var(--surface); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .chart-grid { stroke: var(--line); stroke-width: 1; opacity: 0.55; vector-effect: non-scaling-stroke; }
@@ -456,11 +468,15 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 .tone-accent .legend-swatch { background: #8a5cd0; }
 .tone-positive .legend-swatch { background: #1d8a63; }
 .tone-negative .legend-swatch { background: #c2511f; }
+.tone-muted .legend-swatch { background: #6b7280; }
 path.tone-primary { stroke: #365edb; } circle.tone-primary { fill: #365edb; }
 path.tone-accent { stroke: #8a5cd0; } circle.tone-accent { fill: #8a5cd0; }
 path.tone-positive { stroke: #1d8a63; } circle.tone-positive { fill: #1d8a63; }
 path.tone-negative { stroke: #c2511f; } circle.tone-negative { fill: #c2511f; }
-.run-log { max-height: 420px; overflow: auto; margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+path.tone-muted { stroke: #6b7280; } circle.tone-muted { fill: #6b7280; }
+/* On its own tab the log is the whole view, so it takes the window rather than
+   the 420px it was given as one disclosure among others on the metrics page. */
+.run-log { max-height: 62vh; min-height: 260px; overflow: auto; margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 :where([data-theme="dark"]) .run-chart { background: #16202f; }
 :where([data-theme="dark"]) .chart-tooltip { background: #16202f; box-shadow: 0 8px 24px rgb(0 0 0 / 50%); }
 :where([data-theme="dark"]) .metric-delta.rising { color: #98e2c5; }
@@ -469,7 +485,9 @@ path.tone-negative { stroke: #c2511f; } circle.tone-negative { fill: #c2511f; }
 :where([data-theme="dark"]) .tone-accent .legend-swatch { background: #c2a0f2; }
 :where([data-theme="dark"]) .tone-positive .legend-swatch { background: #6fd5b3; }
 :where([data-theme="dark"]) .tone-negative .legend-swatch { background: #f0a276; }
+:where([data-theme="dark"]) .tone-muted .legend-swatch { background: #9aa5b8; }
 :where([data-theme="dark"]) path.tone-primary { stroke: #7ca0ff; } :where([data-theme="dark"]) circle.tone-primary { fill: #7ca0ff; }
 :where([data-theme="dark"]) path.tone-accent { stroke: #c2a0f2; } :where([data-theme="dark"]) circle.tone-accent { fill: #c2a0f2; }
 :where([data-theme="dark"]) path.tone-positive { stroke: #6fd5b3; } :where([data-theme="dark"]) circle.tone-positive { fill: #6fd5b3; }
 :where([data-theme="dark"]) path.tone-negative { stroke: #f0a276; } :where([data-theme="dark"]) circle.tone-negative { fill: #f0a276; }
+:where([data-theme="dark"]) path.tone-muted { stroke: #9aa5b8; } :where([data-theme="dark"]) circle.tone-muted { fill: #9aa5b8; }
