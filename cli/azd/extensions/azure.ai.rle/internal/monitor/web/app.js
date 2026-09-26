@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import {
-  buildGraph, chartGeometry, chartPath, chartScales, fetchRolloutIndex, fetchRunLog, fetchRunMetrics,
+  buildGraph, chartGeometry, chartHoverAt, chartPath, chartScales, fetchRolloutIndex, fetchRunLog, fetchRunMetrics,
   fetchRunOverview, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
   runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage, TOKEN_PAGE_SIZE,
 } from "./data.mjs";
@@ -141,15 +141,28 @@ function renderActivitySummary() {
   }
 }
 
+// Two tablists share this page: the job's views and, inside a rollout, its
+// detail panels. Only ever one is on screen, but a document-wide sweep would
+// still deselect the other's panels, so each selection stays inside its bar.
 function selectTab(name, focus = false) {
-  for (const tab of document.querySelectorAll('[role="tab"]')) {
-    const selected = tab.id === `tab-${name}`;
+  const target = byID(`tab-${name}`);
+  if (!target) return;
+  for (const tab of target.closest('[role="tablist"]').querySelectorAll('[role="tab"]')) {
+    const selected = tab === target;
     tab.setAttribute("aria-selected", String(selected));
     tab.tabIndex = selected ? 0 : -1;
     byID(tab.getAttribute("aria-controls")).hidden = !selected;
     if (selected && focus) tab.focus();
   }
   if (name === "tokens") renderSequence();
+  // A hidden panel is not redrawn while it polls, so it is redrawn on the way in.
+  if (JOB_TABS.has(name)) {
+    activeJobTab = name;
+    rememberJobTab(name);
+    if (name === "metrics" && runOverview) renderRunView();
+    if (name === "rollouts" && rolloutIndex) renderRolloutList();
+    if (name === "logs") void refreshRunLog();
+  }
 }
 
 function renderConversationMessage(message, fallbackRole) {
@@ -717,7 +730,8 @@ export function setSnapshot(snapshot) {
 for (const tab of document.querySelectorAll('[role="tab"]')) {
   tab.addEventListener("click", () => selectTab(tab.id.slice(4)));
   tab.addEventListener("keydown", (event) => {
-    const tabs = [...document.querySelectorAll('[role="tab"]')].filter((candidate) => !candidate.hidden);
+    const bar = tab.closest('[role="tablist"]');
+    const tabs = [...bar.querySelectorAll('[role="tab"]')].filter((candidate) => !candidate.hidden);
     let index = tabs.indexOf(tab);
     if (event.key === "ArrowRight") index = (index + 1) % tabs.length;
     else if (event.key === "ArrowLeft") index = (index + tabs.length - 1) % tabs.length;
@@ -747,9 +761,30 @@ byID("token-jump-form").addEventListener("submit", (event) => {
 
 let rolloutIndex = null;
 
+// A job monitor is left open and reloaded, so the view being watched outlives a
+// refresh. Session storage can be barred outright, which is not worth failing over.
+const JOB_TAB_KEY = "rle-monitor-job-tab";
+const JOB_TABS = new Set(["metrics", "rollouts", "logs"]);
+let activeJobTab = "metrics";
+try {
+  const stored = sessionStorage.getItem(JOB_TAB_KEY);
+  if (JOB_TABS.has(stored)) activeJobTab = stored;
+} catch { /* storage is unavailable; the default view still works */ }
+
+function rememberJobTab(name) {
+  try {
+    sessionStorage.setItem(JOB_TAB_KEY, name);
+  } catch { /* nothing to do: the tab still switches, it just will not persist */ }
+}
+
 function optionsFor(select, values, label) {
   const current = select.value;
-  select.replaceChildren(element("option", label, ""));
+  // An <option> with no value attribute reports its text as its value, so the
+  // "all" entry needs an explicit empty one or clearing the filter below finds
+  // no match and the select renders blank.
+  const blank = element("option", label);
+  blank.value = "";
+  select.replaceChildren(blank);
   for (const value of values) {
     const option = element("option", String(value));
     option.value = String(value);
@@ -784,9 +819,9 @@ function applyMonitorTitle(jobID) {
   if (brand) {
     const name = brand.querySelector("span:last-child");
     if (name) name.textContent = label;
-    brand.setAttribute("aria-label", `RLE ${label.toLowerCase()} home`);
+    brand.setAttribute("aria-label", `Foundry RLE ${label.toLowerCase()} home`);
   }
-  document.title = jobID ? `RLE job monitor · ${jobID}` : "RLE rollout monitor";
+  document.title = jobID ? `Foundry RLE job monitor · ${jobID}` : "Foundry RLE rollout monitor";
 }
 
 function renderRolloutList() {
@@ -825,14 +860,51 @@ function renderRolloutList() {
   }
   byID("list-empty").hidden = rolloutIndex.data.length > 0;
   byID("list-table").hidden = entries.length === 0;
+  renderRolloutTabCount();
 }
 
 function showRolloutList() {
   byID("snapshot").hidden = true;
-  byID("rollout-list").hidden = false;
-  byID("run-overview").hidden = !hasRunView;
+  // Tabs only earn their place when there are two views to hold. A job with no
+  // local mirror has rollouts and nothing else, and is shown as the plain list.
+  const tabbed = hasRunView;
+  byID("job-tabs").hidden = !tabbed;
+  for (const id of ["run-overview", "rollout-list", "run-log"]) {
+    if (tabbed) byID(id).setAttribute("role", "tabpanel");
+    else byID(id).removeAttribute("role");
+  }
+  if (tabbed) {
+    selectTab(activeJobTab);
+  } else {
+    byID("rollout-list").hidden = false;
+    byID("run-overview").hidden = true;
+    byID("run-log").hidden = true;
+    renderRolloutList();
+  }
   byID("load-status").className = "sr-only";
   byID("load-status").textContent = `${rolloutIndex.data.length} rollouts recorded.`;
+}
+
+// The count belongs on the tab because the list it describes is usually the
+// view that is not on screen, and a run's rollout count is how you tell it is
+// still producing.
+function renderRolloutTabCount() {
+  if (!rolloutIndex) return;
+  byID("tab-rollouts-count").textContent = count(rolloutIndex.data.length);
+}
+
+// Reading a chart raises exactly one question -- what happened at that step --
+// and the answer is in the other tab. Clicking a step carries the filter over.
+function showRolloutsForStep(step) {
+  if (!rolloutIndex || byID("job-tabs").hidden) return;
+  // The list keys steps by checkpoint where one was reported, so the chart's
+  // step number is matched through a rollout rather than used as the value.
+  const match = rolloutIndex.data.find((entry) => entry.step === step);
+  const value = match ? stepLabel(match) : String(step);
+  const select = byID("list-step");
+  if (![...select.options].some((option) => option.value === value)) return;
+  select.value = value;
+  selectTab("rollouts", true);
 }
 
 async function openRollout(rolloutID) {
@@ -841,8 +913,10 @@ async function openRollout(rolloutID) {
   byID("load-error").hidden = true;
   try {
     setSnapshot(await fetchSnapshot(fetch, rolloutID));
+    byID("job-tabs").hidden = true;
     byID("rollout-list").hidden = true;
     byID("run-overview").hidden = true;
+    byID("run-log").hidden = true;
     byID("back-to-list").hidden = false;
     byID("main").focus();
   } catch (error) {
@@ -876,7 +950,9 @@ function startPolling() {
 }
 
 async function pollForNewRollouts() {
-  if (!rolloutIndex || byID("rollout-list").hidden) return;
+  // Polling follows the job view rather than the visible tab: a count that
+  // stopped moving whenever the charts were up would report a live run as done.
+  if (!rolloutIndex || !byID("snapshot").hidden) return;
   const last = rolloutIndex.data.length
     ? rolloutIndex.data[rolloutIndex.data.length - 1].rollout_id
     : "";
@@ -894,7 +970,10 @@ async function pollForNewRollouts() {
   if (update.reset) rolloutIndex.data = update.data;
   else rolloutIndex.data.push(...update.data);
   refreshFilters();
-  renderRolloutList();
+  renderRolloutTabCount();
+  // Drawing a table nobody is looking at costs more than it is worth; the tab
+  // redraws it on the way in, from data this poll has already kept current.
+  if (!byID("rollout-list").hidden) renderRolloutList();
 }
 
 // ---------------------------------------------------------------------------
@@ -914,7 +993,23 @@ let hasRunView = false;
 function formatMetric(value, style) {
   if (!isNumber(value)) return "—";
   if (style === "percent") return `${(value * 100).toFixed(1)}%`;
-  return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toFixed(3);
+  // Seconds are read as a clock. Four thousand of them is 1h 6m to a human and
+  // an unparseable number of digits to everyone.
+  if (style === "duration") {
+    const total = Math.max(0, Math.round(value));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    if (hours) return `${hours}h ${minutes}m`;
+    if (minutes) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
+  }
+  if (value === 0) return "0";
+  if (Math.abs(value) >= 1000) return value.toFixed(0);
+  // A learning rate of 4e-5 shown as "0.000" is a number nobody can act on.
+  // Below the third decimal the exponent carries the information instead.
+  if (Math.abs(value) < 1e-3) return value.toExponential(2);
+  return value.toFixed(3);
 }
 
 // A change in a percentage is measured in points, not percent: success going
@@ -932,6 +1027,15 @@ function renderRunHeadline() {
     const card = element("div", undefined, "metric");
     card.append(element("p", formatMetric(entry.value, entry.format), "metric-value"));
     card.append(element("h2", entry.label));
+    // A fraction of the run completed is read faster as a bar than as a
+    // percentage, which is why loom's overview card carries one.
+    if (entry.key === "progress/done_frac" && isNumber(entry.value)) {
+      const track = element("div", undefined, "metric-progress");
+      const fill = element("div", undefined, "metric-progress-fill");
+      fill.style.width = `${Math.max(0, Math.min(1, entry.value)) * 100}%`;
+      track.append(fill);
+      card.append(track);
+    }
     // The direction of travel is the point; a bare number cannot show it.
     if (isNumber(entry.delta) && entry.delta !== 0) {
       const rising = entry.delta > 0;
@@ -976,6 +1080,100 @@ function chartLegend(geometry) {
   return legend;
 }
 
+// Axis labels are read at a glance, so they drop the trailing zeros the
+// tooltip keeps: a gridline reading "0.25" is clearer than "0.250", and the
+// exact value is one hover away.
+function formatTick(value) {
+  if (!isNumber(value)) return "";
+  if (value === 0) return "0";
+  if (Math.abs(value) >= 1000 || Math.abs(value) < 1e-3) return formatMetric(value);
+  return String(Number(value.toPrecision(6)));
+}
+
+// Room outside the plot area for the axis labels, in viewBox units.
+const CHART_GUTTER = { left: 46, right: 10, top: 8, bottom: 24 };
+
+// Translate a pointer event into viewBox coordinates.
+//
+// The plot is drawn at a fixed 400x160 but stretched to whatever width the
+// card ends up, so the browser letterboxes it. getScreenCTM is the only
+// mapping that survives that; ratios off getBoundingClientRect do not.
+function viewBoxPoint(svg, event) {
+  const matrix = svg.getScreenCTM();
+  if (!matrix) return null;
+  const point = svg.createSVGPoint();
+  point.x = event.clientX;
+  point.y = event.clientY;
+  return point.matrixTransform(matrix.inverse());
+}
+
+function chartTooltipRow(reading) {
+  // The tone lives on the row so the swatch can reuse the legend's colours,
+  // in both themes, without a second copy of the palette.
+  const row = element("div", undefined, `chart-tooltip-row tone-${reading.tone}`);
+  row.append(element("span", "", "legend-swatch"));
+  row.append(element("span", reading.name, "chart-tooltip-name"));
+  row.append(element("span", formatMetric(reading.value), "chart-tooltip-value"));
+  return row;
+}
+
+// Wire hover onto a drawn panel: a crosshair at the nearest step, every series
+// marked at that step, and one tooltip listing them all.
+function attachChartHover(panel, svg, geometry, markers, crosshair) {
+  const tooltip = element("div", undefined, "chart-tooltip");
+  tooltip.hidden = true;
+  panel.append(tooltip);
+
+  const clear = () => {
+    tooltip.hidden = true;
+    crosshair.setAttribute("visibility", "hidden");
+    markers.replaceChildren();
+  };
+
+  const move = (event) => {
+    const point = viewBoxPoint(svg, event);
+    const hover = point ? chartHoverAt(geometry, point.x) : null;
+    if (!hover) {
+      clear();
+      return;
+    }
+    crosshair.setAttribute("visibility", "visible");
+    crosshair.setAttribute("x1", hover.x);
+    crosshair.setAttribute("x2", hover.x);
+    markers.replaceChildren(...hover.readings.map((reading) => svgElement("circle", {
+      cx: reading.x, cy: reading.y, r: 4.5, class: `chart-marker tone-${reading.tone}`,
+    })));
+
+    tooltip.replaceChildren(element("p", `Step ${hover.step}`, "chart-tooltip-step"));
+    for (const reading of hover.readings) tooltip.append(chartTooltipRow(reading));
+    tooltip.hidden = false;
+
+    // Place it beside the cursor, flipping before it runs off the card rather
+    // than after, so the reading stays on screen at the right-hand edge.
+    const bounds = panel.getBoundingClientRect();
+    const x = event.clientX - bounds.left;
+    const y = event.clientY - bounds.top;
+    const width = tooltip.offsetWidth;
+    const height = tooltip.offsetHeight;
+    tooltip.style.left = `${x + width + 24 > bounds.width ? Math.max(4, x - width - 14) : x + 14}px`;
+    // Centred on the cursor rather than floated above it: anchoring it above
+    // parks the tooltip over the title and legend on every mid-height hover.
+    tooltip.style.top = `${Math.min(Math.max(4, y - height / 2), Math.max(4, bounds.height - height - 4))}px`;
+  };
+
+  svg.addEventListener("pointermove", move);
+  svg.addEventListener("pointerleave", clear);
+  svg.addEventListener("click", (event) => {
+    const point = viewBoxPoint(svg, event);
+    const hover = point ? chartHoverAt(geometry, point.x) : null;
+    if (hover) showRolloutsForStep(hover.step);
+  });
+  // A touch drag reads the chart the same way a mouse does, but it never fires
+  // pointerleave, so the crosshair has to be taken down on release.
+  svg.addEventListener("pointercancel", clear);
+  svg.addEventListener("pointerup", clear);
+}
+
 function chartFigure(chart) {
   const geometry = chartGeometry(chart);
   if (!geometry) return null;
@@ -984,15 +1182,47 @@ function chartFigure(chart) {
   panel.append(chartLegend(geometry));
 
   const svg = svgElement("svg", {
-    viewBox: `-2 -6 ${geometry.width + 4} ${geometry.height + 12}`,
+    viewBox: `${-CHART_GUTTER.left} ${-CHART_GUTTER.top}`
+      + ` ${geometry.width + CHART_GUTTER.left + CHART_GUTTER.right}`
+      + ` ${geometry.height + CHART_GUTTER.top + CHART_GUTTER.bottom}`,
     class: "run-chart-plot", role: "img",
     "aria-label": `${chart.title} across steps ${geometry.minStep} to ${geometry.maxStep}`,
   });
-  // A zero line only means something on a chart that crosses it.
-  if (geometry.minValue < 0 && geometry.maxValue > 0) {
-    const zero = geometry.height - (0 - geometry.minValue) / (geometry.maxValue - geometry.minValue) * geometry.height;
-    svg.append(svgElement("line", { x1: 0, y1: zero, x2: geometry.width, y2: zero, class: "chart-zero" }));
+
+  for (const tick of geometry.yTicks) {
+    svg.append(svgElement("line", {
+      x1: 0, y1: tick.y, x2: geometry.width, y2: tick.y,
+      class: tick.value === 0 ? "chart-grid chart-zero" : "chart-grid",
+    }));
+    svg.append(svgElement("text", { x: -9, y: tick.y, class: "chart-tick chart-tick-y" },
+      formatTick(tick.value)));
   }
+  for (const tick of geometry.xTicks) {
+    svg.append(svgElement("line", {
+      x1: tick.x, y1: 0, x2: tick.x, y2: geometry.height, class: "chart-grid",
+    }));
+    svg.append(svgElement("text", { x: tick.x, y: geometry.height + 16, class: "chart-tick chart-tick-x" },
+      String(tick.value)));
+  }
+  svg.append(svgElement("text", {
+    x: geometry.width / 2, y: geometry.height + CHART_GUTTER.bottom, class: "chart-tick chart-axis-title",
+  }, "step"));
+
+  // An SVG only hit-tests painted children, so the empty space between the
+  // lines raises no pointer events at all. This unpainted rect exists purely
+  // to make the whole panel hoverable, which is how the cursor can read a step
+  // it happens not to be exactly on top of.
+  svg.append(svgElement("rect", {
+    x: -CHART_GUTTER.left, y: -CHART_GUTTER.top,
+    width: geometry.width + CHART_GUTTER.left + CHART_GUTTER.right,
+    height: geometry.height + CHART_GUTTER.top + CHART_GUTTER.bottom,
+    class: "chart-hit",
+  }));
+
+  const crosshair = svgElement("line", {
+    x1: 0, y1: 0, x2: 0, y2: geometry.height, class: "chart-crosshair", visibility: "hidden",
+  });
+  svg.append(crosshair);
   for (const entry of geometry.series) {
     svg.append(svgElement("path", {
       d: chartPath(entry.coordinates), class: `chart-line tone-${entry.tone}`, fill: "none",
@@ -1000,18 +1230,15 @@ function chartFigure(chart) {
     // Marking the points keeps a two-step run from looking like a bare line and
     // makes a single reading visible at all.
     for (const point of entry.coordinates) {
-      const dot = svgElement("circle", { cx: point.x, cy: point.y, r: 2.5, class: `chart-dot tone-${entry.tone}` });
-      dot.append(svgElement("title", {}, `Step ${point.step}: ${point.value}`));
-      svg.append(dot);
+      svg.append(svgElement("circle", { cx: point.x, cy: point.y, r: 2.5, class: `chart-dot tone-${entry.tone}` }));
     }
   }
-  panel.append(svg);
 
-  const axis = element("div", undefined, "chart-axis");
-  axis.append(element("span", formatMetric(geometry.minValue)), element("span", `step ${geometry.minStep}`));
-  axis.append(element("span", `step ${geometry.maxStep}`), element("span", formatMetric(geometry.maxValue)));
-  panel.append(axis);
+  const markers = svgElement("g", { class: "chart-markers" });
+  svg.append(markers);
+  panel.append(svg);
   panel.append(element("p", chart.note, "section-note"));
+  attachChartHover(panel, svg, geometry, markers, crosshair);
   return panel;
 }
 
@@ -1051,8 +1278,8 @@ function appendRunLog(tail) {
   runLogOffset = isNumber(tail.offset) ? tail.offset : runLogOffset;
   byID("run-log-size").textContent = isNumber(tail.size) && tail.size > 0
     ? `· ${count(Math.round(tail.size / 1024))} KB written` : "";
-  const panel = byID("run-log-panel");
-  if (panel.open && view.scrollHeight - view.scrollTop - view.clientHeight < 80) {
+  const panel = byID("run-log");
+  if (!panel.hidden && view.scrollHeight - view.scrollTop - view.clientHeight < 80) {
     view.scrollTop = view.scrollHeight;
   }
 }
@@ -1083,7 +1310,7 @@ async function refreshRunMetrics() {
 }
 
 async function pollRunView() {
-  if (!runOverview || byID("run-overview").hidden) return;
+  if (!runOverview || !byID("snapshot").hidden) return;
   try {
     const overview = await fetchRunOverview();
     if (overview && overview.run) runOverview = overview.run;
@@ -1091,15 +1318,17 @@ async function pollRunView() {
     return;
   }
   await refreshRunMetrics();
-  renderRunView();
+  // Metrics are kept current whichever tab is up, so switching to the charts
+  // shows the run as it is now rather than as it was when the tab was left.
+  if (!byID("run-overview").hidden) renderRunView();
   await refreshRunLog();
 }
 
 // The log is only read while it is being looked at. It is the largest artifact
-// by far, and a closed panel polling it would cost more than everything else
+// by far, and a background tab polling it would cost more than everything else
 // on the page put together.
 async function refreshRunLog() {
-  if (!byID("run-log-panel").open) return;
+  if (byID("run-log").hidden) return;
   try {
     appendRunLog(await fetchRunLog(fetch, runLogOffset));
   } catch {
@@ -1126,8 +1355,7 @@ async function load() {
     }
     setSnapshot(await fetchSnapshot());
   } catch (error) {
-    byID("snapshot").hidden = true;
-    byID("rollout-list").hidden = true;
+    for (const id of ["snapshot", "job-tabs", "rollout-list", "run-overview", "run-log"]) byID(id).hidden = true;
     byID("load-status").className = "sr-only";
     byID("load-status").textContent = "";
     byID("load-error").hidden = false;
@@ -1144,7 +1372,6 @@ byID("back-button").addEventListener("click", () => {
 });
 byID("list-split").addEventListener("change", renderRolloutList);
 byID("list-step").addEventListener("change", renderRolloutList);
-byID("run-log-panel").addEventListener("toggle", refreshRunLog);
 
 byID("retry").addEventListener("click", load);
 byID("final-response-toggle").addEventListener("click", () => {

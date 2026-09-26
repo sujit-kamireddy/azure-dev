@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="referrer" content="no-referrer">
-  <title>RLE</title>
+  <title>Foundry RLE</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23203d64'/%3E%3Cpath d='M8 21h4V11H8zm6 0h4v-6h-4zm6 0h4V7h-4z' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/app.js"></script>
@@ -13,7 +13,7 @@
 <body>
   <a class="skip-link" href="#main">Skip to snapshot</a>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="RLE rollout monitor home"><span class="brand-mark">[RLE]</span> <span>Rollout monitor</span></a>
+    <a class="brand" href="/" aria-label="Foundry RLE rollout monitor home"><span class="brand-mark">[Foundry RLE]</span> <span>Rollout monitor</span></a>
     <div class="header-controls">
       <span class="local-label">LOCAL SNAPSHOT</span>
       <button id="theme-toggle" type="button" aria-label="Switch to dark mode">Dark mode</button>
@@ -27,6 +27,11 @@
       <p id="error-message" role="alert"></p>
       <button id="retry" type="button">Try again</button>
     </section>
+    <div id="job-tabs" class="tab-bar job-tab-bar" role="tablist" aria-label="Job views" hidden>
+      <button id="tab-metrics" role="tab" type="button" aria-selected="true" aria-controls="run-overview" tabindex="0">Metrics</button>
+      <button id="tab-rollouts" role="tab" type="button" aria-selected="false" aria-controls="rollout-list" tabindex="-1">Rollouts<span id="tab-rollouts-count" class="tab-count"></span></button>
+      <button id="tab-logs" role="tab" type="button" aria-selected="false" aria-controls="run-log" tabindex="-1">Logs</button>
+    </div>
     <section id="run-overview" class="panel" aria-labelledby="run-overview-title" hidden>
       <div class="list-heading">
         <div>
@@ -39,11 +44,15 @@
       <section id="run-headline" class="metrics" aria-label="Latest training metrics"></section>
       <div id="run-facts" class="run-facts"></div>
       <div id="run-charts" class="run-charts"></div>
-      <details id="run-log-panel" class="detail-section">
-        <summary>Run log <span id="run-log-size" class="muted"></span></summary>
-        <p class="section-note">The tail of the log this run has written so far.</p>
-        <pre id="run-log-text" class="run-log" tabindex="0" role="region" aria-label="Training run log"></pre>
-      </details>
+    </section>
+    <section id="run-log" class="panel" aria-labelledby="run-log-title" hidden>
+      <div class="list-heading">
+        <div>
+          <h2 id="run-log-title">Run log</h2>
+          <p class="muted">The tail of the log this run has written so far <span id="run-log-size"></span></p>
+        </div>
+      </div>
+      <pre id="run-log-text" class="run-log" tabindex="0" role="region" aria-label="Training run log"></pre>
     </section>
     <section id="rollout-list" class="panel" aria-labelledby="rollout-list-title" hidden>
       <div class="list-heading">
