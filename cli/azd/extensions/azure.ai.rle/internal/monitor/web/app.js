@@ -4,7 +4,8 @@
 import {
   buildGraph, chartGeometry, chartHoverAt, chartPath, chartScales, fetchRolloutIndex, fetchRolloutStates, fetchRunLog, fetchRunMetrics,
   fetchRunOverview, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
-  runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage, TOKEN_PAGE_SIZE,
+  runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage,
+  STATE_REQUEST_LIMIT, TOKEN_PAGE_SIZE,
   toolCalls, toolCallSummary, withGroupSignal,
 } from "./data.mjs";
 
@@ -1022,13 +1023,28 @@ function startPolling() {
 // a poll that learned nothing does not redraw the table. Failures leave the
 // existing states in place: a column that emptied on one unreachable poll would
 // be worse than one that lags.
+//
+// The rollouts on screen without a state yet are named in the request, because
+// the monitor classifies a run oldest first and the rows being looked at are
+// usually the newest. Naming them fills the visible column in seconds instead
+// of after the whole backlog.
 async function refreshRolloutStates() {
-  const states = await fetchRolloutStates();
+  const states = await fetchRolloutStates(fetch, unclassifiedVisible());
   if (!states || !states.data) return false;
   const entries = Object.entries(states.data);
   if (entries.length === rolloutStates.size) return false;
   rolloutStates = new Map(entries);
   return true;
+}
+
+function unclassifiedVisible() {
+  if (!rolloutIndex || byID("rollout-list").hidden) return [];
+  const wanted = [];
+  for (const entry of visibleEntries()) {
+    if (wanted.length === STATE_REQUEST_LIMIT) break;
+    if (!rolloutStates.has(entry.rollout_id)) wanted.push(entry.rollout_id);
+  }
+  return wanted;
 }
 
 async function pollForNewRollouts() {

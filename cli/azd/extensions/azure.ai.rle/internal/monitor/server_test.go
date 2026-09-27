@@ -554,3 +554,83 @@ func TestJobIndexDoesNotRefreshOnEveryRequest(t *testing.T) {
 		t.Fatalf("listed %d times, want only the load at startup within the refresh interval", len(calls))
 	}
 }
+
+// probeHandler wires a handler with the state probe the live monitor runs, so
+// a test can exercise the states endpoint end to end.
+func probeHandler(t *testing.T, stub *stubJobSource) (http.Handler, *stateProbe) {
+	t.Helper()
+	index := newJobIndex("ftjob-1", stub)
+	if _, err := index.fetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	probe := newStateProbe(index, stub, 1)
+	handler, err := newHandler(source{jobID: "ftjob-1", index: index, reader: stub, probe: probe}, testHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler, probe
+}
+
+// The page names the rollouts it is displaying so they are classified first.
+// The sweep runs oldest first and a viewer reads a live run newest first, so
+// without this the column stays empty exactly where someone is looking.
+func TestJobModeClassifiesTheRolloutsThePageIsShowingFirst(t *testing.T) {
+	entries := make([]rollouts.Entry, 0, 6)
+	for i := range 6 {
+		entries = append(entries, rollouts.Entry{RolloutID: fmt.Sprintf("%032d", i), Sequence: i})
+	}
+	stub := &stubJobSource{entries: entries}
+	handler, probe := probeHandler(t, stub)
+
+	newest := fmt.Sprintf("%032d", 5)
+	if response := jobRequest(t, handler, "/api/rollouts/states?want="+newest); response.Code != 200 {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if added := probe.fill(context.Background(), 1); added != 1 {
+		t.Fatalf("added = %d, want 1", added)
+	}
+	states, _ := probe.snapshot()
+	if _, ok := states[newest]; !ok {
+		t.Fatalf("states = %v, want the requested rollout classified first", states)
+	}
+}
+
+// `want` names rollouts for the probe to read with the operator's credentials,
+// so it is held to the same rule as opening one: only what this job recorded.
+func TestJobModeIgnoresRequestedRolloutsOutsideTheJob(t *testing.T) {
+	stub := &stubJobSource{entries: []rollouts.Entry{{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+	handler, probe := probeHandler(t, stub)
+
+	foreign := "cccccccccccccccccccccccccccccccc"
+	if response := jobRequest(t, handler, "/api/rollouts/states?want="+foreign); response.Code != 200 {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	probe.fill(context.Background(), 12)
+	for _, id := range stub.fetched() {
+		if id == foreign {
+			t.Fatalf("fetched %q, a rollout this job did not record", foreign)
+		}
+	}
+}
+
+func TestJobModeServesStatesWithoutARequestList(t *testing.T) {
+	stub := &stubJobSource{entries: []rollouts.Entry{{RolloutID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+	handler, probe := probeHandler(t, stub)
+	probe.fill(context.Background(), 12)
+
+	response := jobRequest(t, handler, "/api/rollouts/states")
+	if response.Code != 200 {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	var body struct {
+		Data  map[string]executionState `json:"data"`
+		Known int                       `json:"known"`
+		Total int                       `json:"total"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Known != 1 || body.Total != 1 || len(body.Data) != 1 {
+		t.Fatalf("body = %+v, want 1 known of 1", body)
+	}
+}

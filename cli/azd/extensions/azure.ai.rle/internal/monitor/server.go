@@ -185,10 +185,17 @@ func newHandler(src source, host string) (http.Handler, error) {
 	// and a graph like any other row. Answered from the probe's cache rather
 	// than by reading bodies here, so the page's poll stays cheap and a rollout
 	// is fetched once for the whole run instead of once per viewer.
+	//
+	// `want` carries the rollouts the caller is displaying. It does not change
+	// the answer, only the order the probe works in, so that the rows someone
+	// is looking at are classified before the rest of a long run.
 	mux.HandleFunc("GET /api/rollouts/states", func(w http.ResponseWriter, r *http.Request) {
 		if src.probe == nil {
 			http.NotFound(w, r)
 			return
+		}
+		if wanted := r.URL.Query().Get("want"); wanted != "" {
+			src.probe.prioritise(strings.Split(wanted, ","))
 		}
 		states, known := src.probe.snapshot()
 		encoded, err := json.Marshal(map[string]any{

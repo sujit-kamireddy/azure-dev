@@ -464,6 +464,11 @@ export async function fetchRolloutIndex(fetcher = fetch, after = "") {
 
 // Execution state for the listed rollouts, keyed by rollout id.
 //
+// A request names at most this many rollouts, because an unfiltered list can
+// be the whole run and the point is to name a screenful, not to restate the
+// index in a query string.
+export const STATE_REQUEST_LIMIT = 200;
+
 // The index cannot answer this. A rollout that died mid-flight is still graded,
 // so it arrives with a reward, a graph and success=false -- the same row shape
 // as one that merely scored badly. Only the agent's output separates them, and
@@ -475,10 +480,21 @@ export async function fetchRolloutIndex(fetcher = fetch, after = "") {
 // missing from `data` means "not classified yet", never "completed". A failure
 // to reach it is not worth reporting: the list is still valid without the
 // column, so this returns null rather than throwing the way the index does.
-export async function fetchRolloutStates(fetcher = fetch) {
+//
+// `want` names the rollouts the caller is displaying. It does not change the
+// answer, only the order the monitor classifies a run in: the sweep runs
+// oldest first and a live run is read newest first, so naming what is on
+// screen is the difference between a column that fills while you look at it
+// and one that arrives an hour later.
+export async function fetchRolloutStates(fetcher = fetch, want = []) {
+  // The rollouts the caller is showing, so the monitor classifies those before
+  // the rest of the run. Capped because an unfiltered list can be the whole
+  // run, and the point is to name a screenful, not to restate the index.
+  const asked = Array.isArray(want) ? want.filter(Boolean).slice(0, STATE_REQUEST_LIMIT) : [];
+  const query = asked.length ? `?${new URLSearchParams({ want: asked.join(",") })}` : "";
   let result;
   try {
-    result = await fetcher("/api/rollouts/states", { credentials: "same-origin", cache: "no-store",
+    result = await fetcher(`/api/rollouts/states${query}`, { credentials: "same-origin", cache: "no-store",
       headers: { Accept: "application/json" } });
   } catch {
     return null;
