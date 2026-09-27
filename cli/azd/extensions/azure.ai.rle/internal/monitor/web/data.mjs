@@ -511,19 +511,24 @@ export const RUN_CHARTS = [
     id: "reward",
     title: "Reward",
     note: "Training reward is the policy on rollouts it learns from; validation is held out. "
-      + "They should rise together. Training alone rising is overfitting.",
+      + "They should rise together. Training alone rising is overfitting. Each training step "
+      + "scores a fresh draw of tasks, so most of that line's step-to-step movement is which "
+      + "tasks were drawn rather than the policy changing -- read the mean, not the steps. "
+      + "Validation re-runs one fixed set every time, which pairs the comparison and is why it "
+      + "moves less for the same amount of learning.",
     series: [
-      { key: "env/all/reward/total", name: "Train", tone: "primary" },
+      { key: "env/all/reward/total", name: "Train", tone: "primary", smooth: 5 },
       { key: "rle_harness/validation_mean_reward", name: "Validation", tone: "accent" },
     ],
   },
   {
     id: "success",
     title: "Task success rate",
-    note: "The fraction of rollouts the environment judged successful, which is the demo number.",
+    note: "The fraction of rollouts the environment judged successful, which is the demo number. "
+      + "Training draws new tasks each step, so its mean is the part worth reading.",
     range: [0, 1],
     series: [
-      { key: "env/all/rle_harness/task_success", name: "Train", tone: "primary" },
+      { key: "env/all/rle_harness/task_success", name: "Train", tone: "primary", smooth: 5 },
       { key: "rle_harness/validation_success_rate", name: "Validation", tone: "accent" },
     ],
   },
@@ -662,6 +667,38 @@ export function runCharts(rows = [], specs = RUN_CHARTS) {
   return charts;
 }
 
+// A centred running mean, drawn only where the whole window exists.
+//
+// A per-step training metric is mostly task-draw noise: each step scores a
+// different sample of tasks, so between-task difficulty lands on every point at
+// full strength and the line moves far more than the policy does. Averaging a
+// window of steps cancels most of that draw and leaves the trend, which is the
+// only part of a training curve anyone is trying to read.
+//
+// The window is centred rather than trailing. A trailing mean lags by half its
+// width, so it goes on rising after a run has flattened -- the one misreading
+// that matters when deciding whether to keep paying for a run. Centring costs
+// the newest half-window, and those steps are left undrawn rather than averaged
+// over whatever happens to be available: a partial window is a noisier number
+// wearing the same line, so the gap at the edge is the honest report that the
+// trend for those steps is not known yet. The raw series still runs to the edge,
+// so nothing is hidden by this.
+//
+// A centred window has to be odd, so an even width is rounded up.
+export function smoothSeries(points = [], window = 5) {
+  if (!Array.isArray(points)) return [];
+  const half = Math.floor(window / 2);
+  const span = half * 2 + 1;
+  if (half < 1 || points.length < span) return [];
+  const smoothed = [];
+  for (let index = half; index < points.length - half; index += 1) {
+    let total = 0;
+    for (let offset = -half; offset <= half; offset += 1) total += points[index + offset].value;
+    smoothed.push({ step: points[index].step, value: total / span });
+  }
+  return smoothed;
+}
+
 function chartSeries(rows, definitions = []) {
   const series = [];
   for (const definition of definitions) {
@@ -670,7 +707,21 @@ function chartSeries(rows, definitions = []) {
       const value = row[definition.key];
       if (isNumber(value)) points.push({ step: stepOf(row, index), value });
     });
-    if (points.length) series.push({ ...definition, points });
+    if (!points.length) continue;
+    const { smooth, ...entry } = definition;
+    const trend = smooth ? smoothSeries(points, smooth) : [];
+    if (!trend.length) {
+      series.push({ ...entry, points });
+      continue;
+    }
+    // The measurement keeps its place on the chart, dimmed, so a trend can
+    // never be mistaken for readings that were actually recorded. It is pushed
+    // first so the trend draws over it.
+    series.push({ ...entry, points, raw: true });
+    series.push({
+      ...entry, points: trend, trend: true,
+      name: `${entry.name} (${Math.floor(smooth / 2) * 2 + 1}-step mean)`,
+    });
   }
   return series;
 }

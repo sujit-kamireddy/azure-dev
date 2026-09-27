@@ -1163,7 +1163,7 @@ function chartLegend(geometry) {
   const legend = element("div", undefined, "chart-legend");
   for (const entry of geometry.series) {
     const item = element("span", undefined, `legend-series tone-${entry.tone}`);
-    item.append(element("span", "", "legend-swatch"), element("span", entry.name));
+    item.append(element("span", "", `legend-swatch${entry.raw ? " is-raw" : ""}`), element("span", entry.name));
     legend.append(item);
   }
   return legend;
@@ -1313,13 +1313,21 @@ function chartFigure(chart) {
   });
   svg.append(crosshair);
   for (const entry of geometry.series) {
+    const line = ["chart-line", `tone-${entry.tone}`];
+    if (entry.raw) line.push("is-raw");
     svg.append(svgElement("path", {
-      d: chartPath(entry.coordinates), class: `chart-line tone-${entry.tone}`, fill: "none",
+      d: chartPath(entry.coordinates), class: line.join(" "), fill: "none",
     }));
+    // A trend is computed, not recorded, so it carries no point markers: dots
+    // would claim readings that were never taken at those steps.
+    if (entry.trend) continue;
     // Marking the points keeps a two-step run from looking like a bare line and
     // makes a single reading visible at all.
     for (const point of entry.coordinates) {
-      svg.append(svgElement("circle", { cx: point.x, cy: point.y, r: 2.5, class: `chart-dot tone-${entry.tone}` }));
+      svg.append(svgElement("circle", {
+        cx: point.x, cy: point.y, r: 2.5,
+        class: `chart-dot tone-${entry.tone}${entry.raw ? " is-raw" : ""}`,
+      }));
     }
   }
 

@@ -451,6 +451,12 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
    456x192 viewBox lets it fill the card at whatever width the card lands on. */
 .run-chart-plot { display: block; width: 100%; aspect-ratio: 456 / 192; margin-top: 8px; overflow: visible; touch-action: none; cursor: pointer; }
 .chart-line { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+/* The per-step measurement behind a trend line. Kept on the chart because the
+   trend is derived from it and a reader has to be able to see the scatter it
+   came from; dimmed because the trend is the part to read. */
+.chart-line.is-raw { stroke-width: 1.25; opacity: 0.3; }
+.chart-dot.is-raw { opacity: 0.3; }
+.legend-swatch.is-raw { opacity: 0.4; }
 .chart-dot { stroke: var(--surface); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .chart-grid { stroke: var(--line); stroke-width: 1; opacity: 0.55; vector-effect: non-scaling-stroke; }
 .chart-zero { opacity: 1; stroke-dasharray: 3 3; }
