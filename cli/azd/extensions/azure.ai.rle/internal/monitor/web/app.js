@@ -4,7 +4,8 @@
 import {
   buildGraph, chartGeometry, chartHoverAt, chartPath, chartScales, fetchRolloutIndex, fetchRolloutStates, fetchRunLog, fetchRunMetrics,
   fetchRunOverview, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
-  runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage, TOKEN_PAGE_SIZE,
+  runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage,
+  STATE_REQUEST_LIMIT, TOKEN_PAGE_SIZE,
   toolCalls, toolCallSummary, withGroupSignal,
 } from "./data.mjs";
 
@@ -21,6 +22,10 @@ let tokenData = null;
 let stepPage = 0;
 let callPage = 0;
 const CHART_PAGE_SIZE = 100;
+// Anchored panels are the safer read but spend most of their height on empty
+// space once a run settles into a band, so the run view opens focused and the
+// anchored view stays one click away.
+let chartFocus = true;
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
@@ -33,6 +38,24 @@ applyTheme(window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : 
 byID("theme-toggle").addEventListener("click", () => {
   const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   applyTheme(theme);
+});
+
+function applyChartFocus() {
+  const toggle = byID("chart-focus-toggle");
+  toggle.textContent = chartFocus ? "Focused" : "Anchored";
+  toggle.setAttribute("aria-pressed", String(chartFocus));
+  toggle.title = chartFocus
+    ? "Value axes are fitted to the readings. Switch to anchored to measure every panel from zero"
+      + " or from its declared range."
+    : "Value axes start at zero, or at the range the metric is declared over. Switch to focused to"
+      + " fit them to the readings.";
+}
+
+applyChartFocus();
+byID("chart-focus-toggle").addEventListener("click", () => {
+  chartFocus = !chartFocus;
+  applyChartFocus();
+  renderRunCharts();
 });
 
 function element(tag, text, className) {
@@ -1022,13 +1045,28 @@ function startPolling() {
 // a poll that learned nothing does not redraw the table. Failures leave the
 // existing states in place: a column that emptied on one unreachable poll would
 // be worse than one that lags.
+//
+// The rollouts on screen without a state yet are named in the request, because
+// the monitor classifies a run oldest first and the rows being looked at are
+// usually the newest. Naming them fills the visible column in seconds instead
+// of after the whole backlog.
 async function refreshRolloutStates() {
-  const states = await fetchRolloutStates();
+  const states = await fetchRolloutStates(fetch, unclassifiedVisible());
   if (!states || !states.data) return false;
   const entries = Object.entries(states.data);
   if (entries.length === rolloutStates.size) return false;
   rolloutStates = new Map(entries);
   return true;
+}
+
+function unclassifiedVisible() {
+  if (!rolloutIndex || byID("rollout-list").hidden) return [];
+  const wanted = [];
+  for (const entry of visibleEntries()) {
+    if (wanted.length === STATE_REQUEST_LIMIT) break;
+    if (!rolloutStates.has(entry.rollout_id)) wanted.push(entry.rollout_id);
+  }
+  return wanted;
 }
 
 async function pollForNewRollouts() {
@@ -1163,7 +1201,7 @@ function chartLegend(geometry) {
   const legend = element("div", undefined, "chart-legend");
   for (const entry of geometry.series) {
     const item = element("span", undefined, `legend-series tone-${entry.tone}`);
-    item.append(element("span", "", "legend-swatch"), element("span", entry.name));
+    item.append(element("span", "", `legend-swatch${entry.raw ? " is-raw" : ""}`), element("span", entry.name));
     legend.append(item);
   }
   return legend;
@@ -1264,7 +1302,7 @@ function attachChartHover(panel, svg, geometry, markers, crosshair) {
 }
 
 function chartFigure(chart) {
-  const geometry = chartGeometry(chart);
+  const geometry = chartGeometry(chart, 400, 160, chartFocus);
   if (!geometry) return null;
   const panel = element("section", undefined, "run-chart");
   panel.append(element("h3", chart.title));
@@ -1313,13 +1351,21 @@ function chartFigure(chart) {
   });
   svg.append(crosshair);
   for (const entry of geometry.series) {
+    const line = ["chart-line", `tone-${entry.tone}`];
+    if (entry.raw) line.push("is-raw");
     svg.append(svgElement("path", {
-      d: chartPath(entry.coordinates), class: `chart-line tone-${entry.tone}`, fill: "none",
+      d: chartPath(entry.coordinates), class: line.join(" "), fill: "none",
     }));
+    // A trend is computed, not recorded, so it carries no point markers: dots
+    // would claim readings that were never taken at those steps.
+    if (entry.trend) continue;
     // Marking the points keeps a two-step run from looking like a bare line and
     // makes a single reading visible at all.
     for (const point of entry.coordinates) {
-      svg.append(svgElement("circle", { cx: point.x, cy: point.y, r: 2.5, class: `chart-dot tone-${entry.tone}` }));
+      svg.append(svgElement("circle", {
+        cx: point.x, cy: point.y, r: 2.5,
+        class: `chart-dot tone-${entry.tone}${entry.raw ? " is-raw" : ""}`,
+      }));
     }
   }
 

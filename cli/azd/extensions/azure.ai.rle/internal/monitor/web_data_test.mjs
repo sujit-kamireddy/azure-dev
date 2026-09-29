@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  fetchRolloutIndex, fetchRolloutStates, fetchSnapshot, mapSnapshot,
+  fetchRolloutIndex, fetchRolloutStates, fetchSnapshot, mapSnapshot, STATE_REQUEST_LIMIT,
 } from "./web/data.mjs";
 
 const snapshot = (response = {}) => ({
@@ -262,6 +262,35 @@ test("an unavailable state endpoint is reported as absent, not as an error", asy
     async () => ({ ok: true, json: async () => { throw new Error("invalid JSON"); } }),
   ]) {
     assert.equal(await fetchRolloutStates(responder), null);
+  }
+});
+
+// The monitor classifies a run oldest first; a live run is read newest first.
+// Naming the rows on screen is what stops the column being empty exactly where
+// someone is looking.
+test("names the rollouts on screen so they are classified first", async () => {
+  await fetchRolloutStates(async (url) => {
+    assert.equal(url, "/api/rollouts/states?want=a%2Cb");
+    return { ok: true, json: async () => ({ data: {} }) };
+  }, ["a", "b"]);
+});
+
+// An unfiltered list can be the whole run, so the request names a screenful
+// rather than restating the index in a query string.
+test("caps and cleans what one request may name", async () => {
+  const asked = Array.from({ length: STATE_REQUEST_LIMIT + 50 }, (_, i) => `r${i}`);
+  await fetchRolloutStates(async (url) => {
+    const want = new URL(url, "http://x").searchParams.get("want").split(",");
+    assert.equal(want.length, STATE_REQUEST_LIMIT);
+    assert.equal(want[0], "r0");
+    return { ok: true, json: async () => ({ data: {} }) };
+  }, asked);
+
+  for (const junk of [[], ["", null, undefined], "not-an-array", null, undefined]) {
+    await fetchRolloutStates(async (url) => {
+      assert.equal(url, "/api/rollouts/states", `bad want ${JSON.stringify(junk)} reached the query`);
+      return { ok: true, json: async () => ({ data: {} }) };
+    }, junk);
   }
 });
 

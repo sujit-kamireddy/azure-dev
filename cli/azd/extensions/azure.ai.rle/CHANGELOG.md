@@ -27,6 +27,15 @@
   here still lists its rollouts, which come from the service, with the run
   panels omitted.
 
+- The run charts now fit their value axis to the readings, and a "Value axis"
+  control above them switches back to the anchored view. A run that climbs
+  inside a band spent most of an anchored panel drawing the empty space
+  underneath it: reward moving 0.52 to 0.77 was squeezed into under a third of
+  the panel's height, which is the movement the panel exists to show. Anchoring
+  is still the safer reading and stays one click away, because 0.75 drawn full
+  height looks like success rather than three quarters, so a declared range
+  bounds a fitted window rather than being discarded by it.
+
 - Watching a job is now called a job monitor rather than a rollout monitor, in
   the line the command prints and in the page's own heading and title. A job has
   steps, metrics and a run log behind it; a single captured rollout does not,

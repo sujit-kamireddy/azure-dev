@@ -464,6 +464,11 @@ export async function fetchRolloutIndex(fetcher = fetch, after = "") {
 
 // Execution state for the listed rollouts, keyed by rollout id.
 //
+// A request names at most this many rollouts, because an unfiltered list can
+// be the whole run and the point is to name a screenful, not to restate the
+// index in a query string.
+export const STATE_REQUEST_LIMIT = 200;
+
 // The index cannot answer this. A rollout that died mid-flight is still graded,
 // so it arrives with a reward, a graph and success=false -- the same row shape
 // as one that merely scored badly. Only the agent's output separates them, and
@@ -475,10 +480,21 @@ export async function fetchRolloutIndex(fetcher = fetch, after = "") {
 // missing from `data` means "not classified yet", never "completed". A failure
 // to reach it is not worth reporting: the list is still valid without the
 // column, so this returns null rather than throwing the way the index does.
-export async function fetchRolloutStates(fetcher = fetch) {
+//
+// `want` names the rollouts the caller is displaying. It does not change the
+// answer, only the order the monitor classifies a run in: the sweep runs
+// oldest first and a live run is read newest first, so naming what is on
+// screen is the difference between a column that fills while you look at it
+// and one that arrives an hour later.
+export async function fetchRolloutStates(fetcher = fetch, want = []) {
+  // The rollouts the caller is showing, so the monitor classifies those before
+  // the rest of the run. Capped because an unfiltered list can be the whole
+  // run, and the point is to name a screenful, not to restate the index.
+  const asked = Array.isArray(want) ? want.filter(Boolean).slice(0, STATE_REQUEST_LIMIT) : [];
+  const query = asked.length ? `?${new URLSearchParams({ want: asked.join(",") })}` : "";
   let result;
   try {
-    result = await fetcher("/api/rollouts/states", { credentials: "same-origin", cache: "no-store",
+    result = await fetcher(`/api/rollouts/states${query}`, { credentials: "same-origin", cache: "no-store",
       headers: { Accept: "application/json" } });
   } catch {
     return null;
@@ -511,19 +527,24 @@ export const RUN_CHARTS = [
     id: "reward",
     title: "Reward",
     note: "Training reward is the policy on rollouts it learns from; validation is held out. "
-      + "They should rise together. Training alone rising is overfitting.",
+      + "They should rise together. Training alone rising is overfitting. Each training step "
+      + "scores a fresh draw of tasks, so most of that line's step-to-step movement is which "
+      + "tasks were drawn rather than the policy changing -- read the mean, not the steps. "
+      + "Validation re-runs one fixed set every time, which pairs the comparison and is why it "
+      + "moves less for the same amount of learning.",
     series: [
-      { key: "env/all/reward/total", name: "Train", tone: "primary" },
+      { key: "env/all/reward/total", name: "Train", tone: "primary", smooth: 5 },
       { key: "rle_harness/validation_mean_reward", name: "Validation", tone: "accent" },
     ],
   },
   {
     id: "success",
     title: "Task success rate",
-    note: "The fraction of rollouts the environment judged successful, which is the demo number.",
+    note: "The fraction of rollouts the environment judged successful, which is the demo number. "
+      + "Training draws new tasks each step, so its mean is the part worth reading.",
     range: [0, 1],
     series: [
-      { key: "env/all/rle_harness/task_success", name: "Train", tone: "primary" },
+      { key: "env/all/rle_harness/task_success", name: "Train", tone: "primary", smooth: 5 },
       { key: "rle_harness/validation_success_rate", name: "Validation", tone: "accent" },
     ],
   },
@@ -662,6 +683,38 @@ export function runCharts(rows = [], specs = RUN_CHARTS) {
   return charts;
 }
 
+// A centred running mean, drawn only where the whole window exists.
+//
+// A per-step training metric is mostly task-draw noise: each step scores a
+// different sample of tasks, so between-task difficulty lands on every point at
+// full strength and the line moves far more than the policy does. Averaging a
+// window of steps cancels most of that draw and leaves the trend, which is the
+// only part of a training curve anyone is trying to read.
+//
+// The window is centred rather than trailing. A trailing mean lags by half its
+// width, so it goes on rising after a run has flattened -- the one misreading
+// that matters when deciding whether to keep paying for a run. Centring costs
+// the newest half-window, and those steps are left undrawn rather than averaged
+// over whatever happens to be available: a partial window is a noisier number
+// wearing the same line, so the gap at the edge is the honest report that the
+// trend for those steps is not known yet. The raw series still runs to the edge,
+// so nothing is hidden by this.
+//
+// A centred window has to be odd, so an even width is rounded up.
+export function smoothSeries(points = [], window = 5) {
+  if (!Array.isArray(points)) return [];
+  const half = Math.floor(window / 2);
+  const span = half * 2 + 1;
+  if (half < 1 || points.length < span) return [];
+  const smoothed = [];
+  for (let index = half; index < points.length - half; index += 1) {
+    let total = 0;
+    for (let offset = -half; offset <= half; offset += 1) total += points[index + offset].value;
+    smoothed.push({ step: points[index].step, value: total / span });
+  }
+  return smoothed;
+}
+
 function chartSeries(rows, definitions = []) {
   const series = [];
   for (const definition of definitions) {
@@ -670,7 +723,21 @@ function chartSeries(rows, definitions = []) {
       const value = row[definition.key];
       if (isNumber(value)) points.push({ step: stepOf(row, index), value });
     });
-    if (points.length) series.push({ ...definition, points });
+    if (!points.length) continue;
+    const { smooth, ...entry } = definition;
+    const trend = smooth ? smoothSeries(points, smooth) : [];
+    if (!trend.length) {
+      series.push({ ...entry, points });
+      continue;
+    }
+    // The measurement keeps its place on the chart, dimmed, so a trend can
+    // never be mistaken for readings that were actually recorded. It is pushed
+    // first so the trend draws over it.
+    series.push({ ...entry, points, raw: true });
+    series.push({
+      ...entry, points: trend, trend: true,
+      name: `${entry.name} (${Math.floor(smooth / 2) * 2 + 1}-step mean)`,
+    });
   }
   return series;
 }
@@ -790,31 +857,60 @@ function axisTicks(min, max, target, wholeNumbers = false) {
   return ticks;
 }
 
+// The share of a focused window given to clearance above and below the
+// readings, so the highest and lowest points are not drawn on the frame.
+const FOCUS_PADDING = 0.08;
+
+// The window the value axis covers.
+//
+// Anchored is the conservative reading. A declared range is kept whole, because
+// 0.75 drawn full height looks like success rather than three quarters, and a
+// positive-only series is measured from zero so the height of a line means
+// something on its own.
+//
+// Focused gives that up for resolution. A run that moves between 0.52 and 0.77
+// spends two thirds of an anchored panel drawing the empty space underneath it,
+// which is where the movement the panel exists to show gets lost. The value
+// axis is labelled either way, so the window is read off the ticks rather than
+// assumed. A declared range still bounds a focused window: a fraction never
+// gets an axis above 1, however close to the ceiling its readings sit.
+function valueWindow(values, range, focus) {
+  let minValue = Math.min(...values);
+  let maxValue = Math.max(...values);
+  if (!focus && range) return [range[0], range[1]];
+  // A run that has not moved yet is still a run. Padding a flat series keeps
+  // it a line across the middle instead of a divide-by-zero.
+  if (minValue === maxValue) {
+    const padding = Math.abs(minValue) > 0 ? Math.abs(minValue) * 0.1 : 1;
+    minValue -= padding;
+    maxValue += padding;
+  } else if (focus) {
+    const padding = (maxValue - minValue) * FOCUS_PADDING;
+    minValue -= padding;
+    maxValue += padding;
+  }
+  if (!focus) return [minValue > 0 ? 0 : minValue, maxValue];
+  if (!range) return [minValue, maxValue];
+  const bounded = [Math.max(range[0], minValue), Math.min(range[1], maxValue)];
+  // A reading outside its own declared range would invert the bounded window,
+  // so the bound is only taken when it leaves an axis that can still be drawn.
+  return bounded[0] < bounded[1] ? bounded : [minValue, maxValue];
+}
+
 // chartGeometry places a panel's points in a fixed 400x160 viewBox.
 //
 // Held separately from the drawing so the arithmetic that decides whether a
 // collapse is visible can be tested without a DOM. A single step is drawn at
 // the left edge rather than the middle: a run with one step should look like a
 // run that has just started, not one centred and finished.
-export function chartGeometry(chart, width = 400, height = 160) {
+export function chartGeometry(chart, width = 400, height = 160, focus = false) {
   const points = chart.series.flatMap((entry) => entry.points);
   if (!points.length) return null;
   const steps = points.map((point) => point.step);
   const minStep = Math.min(...steps);
   const maxStep = Math.max(...steps);
   const values = points.map((point) => point.value);
-  let minValue = chart.range ? chart.range[0] : Math.min(...values);
-  let maxValue = chart.range ? chart.range[1] : Math.max(...values);
-  if (!chart.range) {
-    // A run that has not moved yet is still a run. Padding a flat series keeps
-    // it a line across the middle instead of a divide-by-zero.
-    if (minValue === maxValue) {
-      const padding = Math.abs(minValue) > 0 ? Math.abs(minValue) * 0.1 : 1;
-      minValue -= padding;
-      maxValue += padding;
-    }
-    if (minValue > 0) minValue = 0;
-  }
+  const [minValue, maxValue] = valueWindow(values, chart.range, focus);
   const spanX = maxStep - minStep;
   const spanY = maxValue - minValue || 1;
   const x = (step) => spanX === 0 ? 0 : (step - minStep) / spanX * width;
@@ -843,7 +939,12 @@ export function chartGeometry(chart, width = 400, height = 160) {
     width, height, minStep, maxStep, minValue, maxValue, independent,
     xTicks: (spanX === 0 ? [minStep] : axisTicks(minStep, maxStep, 4, true))
       .map((step) => ({ value: step, x: x(step) })),
-    yTicks: independent ? [] : axisTicks(minValue, maxValue, 4).map((value) => ({ value, y: y(value) })),
+    // An anchored axis starts at zero or at a declared bound, so a nice stride
+    // lands on it. A focused window is an arbitrary interval, where the stride
+    // ladder rounds up often enough to leave two labels on the whole axis, so
+    // it is asked for one more.
+    yTicks: independent ? [] : axisTicks(minValue, maxValue, focus ? 5 : 4)
+      .map((value) => ({ value, y: y(value) })),
     series: chart.series.map((entry) => {
       const scale = scaleFor(entry);
       return {

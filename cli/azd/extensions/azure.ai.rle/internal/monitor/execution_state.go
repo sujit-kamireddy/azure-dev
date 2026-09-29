@@ -115,6 +115,10 @@ type stateProbe struct {
 	mu       sync.Mutex
 	states   map[string]executionState
 	inflight map[string]struct{}
+	// Rollouts someone is looking at right now, classified ahead of the sweep.
+	// Held as a queue rather than a set so the order a viewer asked in is the
+	// order they are answered in.
+	wanted []string
 }
 
 func newStateProbe(index *jobIndex, reader rollouts.Reader, workers int) *stateProbe {
@@ -139,15 +143,36 @@ func (p *stateProbe) snapshot() (map[string]executionState, int) {
 	return out, len(p.states)
 }
 
-// pending returns rollouts the probe has neither classified nor started, up to
-// limit, and marks them in flight.
-func (p *stateProbe) pending(ids []string, limit int) []string {
+// prioritise moves rollouts to the front of the probe's work.
+//
+// The sweep runs oldest first, which is the order the run happened in but not
+// the order anyone reads it: a viewer filters the list to the step that just
+// landed, and those are the last rollouts the sweep would reach. On a long run
+// that is the difference between a column that fills while you look at it and
+// one that arrives an hour later, so the page sends what it is showing and
+// those are classified next.
+//
+// Already-known and in-flight rollouts are dropped here rather than queued, so
+// a page repeating its request every poll does not grow the queue.
+//
+// Only rollouts this job recorded are queued, so the request cannot be used to
+// pull an arbitrary ID through the operator's credentials. An ID missing from
+// the index is skipped rather than looked up: this is a hint about what is on
+// screen, and a page showing a rollout necessarily got it from the index, so a
+// miss means a stale index and the next poll asks again.
+func (p *stateProbe) prioritise(ids []string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	queued := make([]string, 0, limit)
+	queued := make(map[string]struct{}, len(p.wanted))
+	for _, id := range p.wanted {
+		queued[id] = struct{}{}
+	}
 	for _, id := range ids {
-		if len(queued) == limit {
-			break
+		if len(p.wanted) >= stateProbeWanted {
+			return
+		}
+		if id == "" || !p.index.has(id) {
+			continue
 		}
 		if _, done := p.states[id]; done {
 			continue
@@ -155,8 +180,51 @@ func (p *stateProbe) pending(ids []string, limit int) []string {
 		if _, busy := p.inflight[id]; busy {
 			continue
 		}
+		if _, already := queued[id]; already {
+			continue
+		}
+		queued[id] = struct{}{}
+		p.wanted = append(p.wanted, id)
+	}
+}
+
+// pending returns rollouts the probe has neither classified nor started, up to
+// limit, and marks them in flight. Rollouts a viewer asked for come first; the
+// rest of the batch continues the sweep, so asking for one screen of rollouts
+// does not stop the run from being classified in the background.
+func (p *stateProbe) pending(ids []string, limit int) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	queued := make([]string, 0, limit)
+	taken := make(map[string]struct{}, limit)
+	claim := func(id string) bool {
+		if _, done := p.states[id]; done {
+			return false
+		}
+		if _, busy := p.inflight[id]; busy {
+			return false
+		}
+		if _, dup := taken[id]; dup {
+			return false
+		}
 		p.inflight[id] = struct{}{}
+		taken[id] = struct{}{}
 		queued = append(queued, id)
+		return true
+	}
+	// A request is consumed whether or not it was claimable: an id that is
+	// already known or in flight is answered, and leaving it queued would make
+	// the same rollout block the front of the queue on every pass.
+	for len(p.wanted) > 0 && len(queued) < limit {
+		id := p.wanted[0]
+		p.wanted = p.wanted[1:]
+		claim(id)
+	}
+	for _, id := range ids {
+		if len(queued) == limit {
+			break
+		}
+		claim(id)
 	}
 	return queued
 }
@@ -222,6 +290,10 @@ const (
 	stateProbeBatch   = 12
 	stateProbeIdle    = 10 * time.Second
 	stateProbeBusy    = 500 * time.Millisecond
+	// One screen of rollouts is well under this; the cap is only here so a
+	// caller asking for a whole run at once cannot make the queue the memory
+	// the probe exists to avoid spending.
+	stateProbeWanted = 512
 )
 
 // run classifies the run in the background for as long as the monitor is up.

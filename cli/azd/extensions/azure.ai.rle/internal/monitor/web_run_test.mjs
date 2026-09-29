@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   chartGeometry, chartPath, exceptionFromTraceback, executionStatus, groupSignal, runCharts, runFacts,
-  runHeadline, runWarnings, settingLabel, withGroupSignal, RUN_CHARTS,
+  runHeadline, runWarnings, settingLabel, smoothSeries, withGroupSignal, RUN_CHARTS,
 } from "./web/data.mjs";
 
 const rewardChart = RUN_CHARTS.find((chart) => chart.id === "reward");
@@ -83,6 +83,55 @@ test("a chart with a declared range keeps it instead of fitting to the data", ()
 
   assert.deepEqual([geometry.minValue, geometry.maxValue], [0, 1]);
   assert.equal(geometry.series[0].coordinates[0].y, 80);
+});
+
+// The complaint this answers: a run that climbs inside a band spends most of an
+// anchored panel drawing the empty space underneath it, and the movement the
+// panel exists to show is squeezed into what is left.
+test("a focused axis fits the readings and keeps them clear of the frame", () => {
+  const [chart] = runCharts([
+    { step: 0, "env/all/reward/total": 0.52 },
+    { step: 1, "env/all/reward/total": 0.77 },
+  ], [rewardChart]);
+  const anchored = chartGeometry(chart, 400, 160);
+  const focused = chartGeometry(chart, 400, 160, true);
+
+  assert.equal(anchored.minValue, 0, "the anchored reading is unchanged by the option");
+  assert.ok(focused.minValue > 0.49 && focused.minValue < 0.52, `low: ${focused.minValue}`);
+  assert.ok(focused.maxValue > 0.77 && focused.maxValue < 0.8, `high: ${focused.maxValue}`);
+
+  // The same 0.25 of movement, as a share of the height it is drawn in.
+  const travel = ({ series, height }) => Math.abs(series[0].coordinates[0].y
+    - series[0].coordinates[1].y) / height;
+  assert.ok(travel(anchored) < 0.35, `anchored travel: ${travel(anchored)}`);
+  assert.ok(travel(focused) > 0.8, `focused travel: ${travel(focused)}`);
+});
+
+// Focus buys resolution, not a licence to draw a fraction above its ceiling.
+test("a declared range bounds a focused window instead of dictating it", () => {
+  const success = RUN_CHARTS.find((chart) => chart.id === "success");
+  const [chart] = runCharts([
+    { step: 0, "env/all/rle_harness/task_success": 0.95 },
+    { step: 1, "env/all/rle_harness/task_success": 1 },
+  ], [success]);
+  const geometry = chartGeometry(chart, 400, 160, true);
+
+  assert.ok(geometry.minValue > 0.94 && geometry.minValue < 0.95, `low: ${geometry.minValue}`);
+  assert.equal(geometry.maxValue, 1, "clearance cannot push the axis past a declared ceiling");
+  assert.deepEqual(
+    [chartGeometry(chart, 400, 160).minValue, chartGeometry(chart, 400, 160).maxValue], [0, 1]);
+});
+
+test("a run that has not moved is a flat line on a focused axis too", () => {
+  const [chart] = runCharts([
+    { step: 0, "env/all/reward/total": 0.4 },
+    { step: 1, "env/all/reward/total": 0.4 },
+  ], [rewardChart]);
+  const geometry = chartGeometry(chart, 400, 160, true);
+  const [first, second] = geometry.series[0].coordinates;
+
+  assert.ok(geometry.minValue < 0.4 && geometry.maxValue > 0.4);
+  assert.ok(Number.isFinite(first.y) && first.y === second.y);
 });
 
 test("a run that has not moved is a flat line rather than a division by zero", () => {
@@ -400,4 +449,90 @@ test("the raised exception wins over the frames it wrapped", () => {
   );
   assert.equal(failure.type, "openai.APITimeoutError");
   assert.equal(failure.message, "Request timed out.");
+});
+
+// Why the trend line exists: a training step scores a fresh draw of tasks, so
+// between-task difficulty lands on every point at full strength and the line
+// swings far more than the policy moves. These pin the averaging that cancels
+// the draw, and the properties that keep it from inventing a different lie.
+
+test("averaging cancels the task draw without flattening the trend underneath it", () => {
+  // A real +0.01/step climb buried under a draw that alternates +/-0.08.
+  const rows = Array.from({ length: 20 }, (_, step) => ({
+    step, "env/all/reward/total": 0.5 + 0.01 * step + (step % 2 ? 0.08 : -0.08),
+  }));
+  const [chart] = runCharts(rows, [rewardChart]);
+  const [raw, trend] = chart.series;
+
+  const swing = (points) => points
+    .slice(1)
+    .reduce((total, point, index) => total + Math.abs(point.value - points[index].value), 0) / (points.length - 1);
+  assert.ok(swing(trend.points) < swing(raw.points) / 3,
+    `trend should damp the draw: raw ${swing(raw.points)} vs trend ${swing(trend.points)}`);
+
+  const first = trend.points[0];
+  const last = trend.points[trend.points.length - 1];
+  const slope = (last.value - first.value) / (last.step - first.step);
+  assert.ok(Math.abs(slope - 0.01) < 0.003, `underlying slope should survive, got ${slope}`);
+});
+
+// A trailing mean keeps rising after a run has flattened, which is the one
+// misreading that costs money. The window is centred so a change is reported
+// at the step it happened.
+test("a change is reported at the step it happened, not half a window later", () => {
+  const rows = Array.from({ length: 20 }, (_, step) => ({
+    step, "env/all/reward/total": step < 10 ? 0 : 1,
+  }));
+  const [, trend] = runCharts(rows, [rewardChart])[0].series;
+  const at = (step) => trend.points.find((point) => point.step === step).value;
+
+  // Symmetric about the true edge: 2 of 5 raised at step 9, 3 of 5 at step 10.
+  assert.equal(at(9), 0.4);
+  assert.equal(at(10), 0.6);
+  assert.equal(at(9) + at(10), 1, "the crossing must straddle the real change");
+});
+
+test("the trend never extends past a full window, and the measurement still reaches the edge", () => {
+  const rows = Array.from({ length: 9 }, (_, step) => ({ step, "env/all/reward/total": 0.5 }));
+  const [chart] = runCharts(rows, [rewardChart]);
+  const [raw, trend] = chart.series;
+
+  assert.deepEqual([raw.raw, trend.trend], [true, true]);
+  assert.equal(raw.name, "Train");
+  assert.equal(trend.name, "Train (5-step mean)");
+  // Raw runs 0..8; a centred 5-wide window only exists for 2..6.
+  assert.deepEqual(raw.points.map((point) => point.step), [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(trend.points.map((point) => point.step), [2, 3, 4, 5, 6]);
+});
+
+test("a run too short to average is left as the measurement alone", () => {
+  const rows = Array.from({ length: 4 }, (_, step) => ({ step, "env/all/reward/total": 0.5 }));
+  const [chart] = runCharts(rows, [rewardChart]);
+
+  assert.deepEqual(chart.series.map((entry) => entry.name), ["Train"]);
+  assert.equal(chart.series[0].raw, undefined, "an unaveraged series is not dimmed");
+});
+
+// Validation is already a paired measurement against one fixed task set, so it
+// carries none of the draw noise and is short enough that averaging would
+// destroy it rather than clarify it.
+test("the held-out series is never averaged", () => {
+  const rows = Array.from({ length: 20 }, (_, step) => ({
+    step, "env/all/reward/total": 0.5, "rle_harness/validation_mean_reward": 0.6,
+  }));
+  const names = runCharts(rows, [rewardChart])[0].series.map((entry) => entry.name);
+
+  assert.deepEqual(names, ["Train", "Train (5-step mean)", "Validation"]);
+});
+
+test("smoothing reads values, not row order, and rejects windows that cannot be centred", () => {
+  const points = [0, 1, 2, 3, 4].map((step) => ({ step, value: step }));
+
+  assert.deepEqual(smoothSeries(points, 5), [{ step: 2, value: 2 }]);
+  // An even width cannot be centred, so it rounds up to the next odd one.
+  assert.deepEqual(smoothSeries(points, 4), smoothSeries(points, 5));
+  assert.deepEqual(smoothSeries(points, 2), smoothSeries(points, 3));
+  assert.deepEqual(smoothSeries(points, 3), [{ step: 1, value: 1 }, { step: 2, value: 2 }, { step: 3, value: 3 }]);
+  for (const window of [0, 1, -5]) assert.deepEqual(smoothSeries(points, window), []);
+  for (const bad of [undefined, null, "points", 5]) assert.deepEqual(smoothSeries(bad, 5), []);
 });

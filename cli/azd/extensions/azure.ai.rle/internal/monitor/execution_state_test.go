@@ -228,3 +228,107 @@ func mustQuote(text string) string {
 	}
 	return string(encoded)
 }
+
+// The sweep runs oldest first, but a viewer reads a training run newest first:
+// they filter the list to the step that just landed. Those rollouts are the
+// last the sweep would reach, so on a long run the column stays empty exactly
+// where someone is looking. These pin the request that fixes that.
+
+func TestStateProbeClassifiesRequestedRolloutsBeforeTheSweepReachesThem(t *testing.T) {
+	probe, _ := probeFixture(t, []string{"a", "b", "c", "d", "e", "f"}, nil)
+	probe.prioritise([]string{"f", "e"})
+
+	// A batch of three: the two asked for, then the sweep carries on from the
+	// front, so asking for a screenful does not stall the background pass.
+	if added := probe.fill(context.Background(), 3); added != 3 {
+		t.Fatalf("added = %d, want 3", added)
+	}
+	states, _ := probe.snapshot()
+	for _, id := range []string{"f", "e"} {
+		if _, ok := states[id]; !ok {
+			t.Fatalf("requested rollout %q was not classified first, got %v", id, states)
+		}
+	}
+	if _, ok := states["a"]; !ok {
+		t.Fatalf("the sweep did not advance alongside the request, got %v", states)
+	}
+	if _, ok := states["b"]; ok {
+		t.Fatalf("the batch limit was exceeded, got %v", states)
+	}
+}
+
+// The page repeats its request on every poll, so a request has to be a hint
+// rather than an instruction to read: re-asking for a rollout already answered
+// must not read the ~342KB body again.
+func TestStateProbeRereadsNothingWhenAViewerKeepsAsking(t *testing.T) {
+	probe, reader := probeFixture(t, []string{"a", "b", "c"}, nil)
+	for range 3 {
+		probe.prioritise([]string{"c"})
+	}
+	if added := probe.fill(context.Background(), 12); added != 3 {
+		t.Fatalf("added = %d, want 3", added)
+	}
+	probe.prioritise([]string{"c", "a"})
+	if added := probe.fill(context.Background(), 12); added != 0 {
+		t.Fatalf("a request for classified rollouts added = %d, want 0", added)
+	}
+	if reader.calls["c"] != 1 {
+		t.Fatalf("reader called %d times for c, want 1", reader.calls["c"])
+	}
+	if len(probe.wanted) != 0 {
+		t.Fatalf("queue retained %d ids across polls, want 0", len(probe.wanted))
+	}
+}
+
+// A request that could not be served is dropped rather than left at the front
+// of the queue, where it would block every later request behind it.
+func TestStateProbeDoesNotLetAnUnreadableRequestBlockTheQueue(t *testing.T) {
+	probe, reader := probeFixture(t, []string{"a", "b"}, map[string]bool{"a": true})
+	probe.prioritise([]string{"a", "b"})
+
+	if added := probe.fill(context.Background(), 12); added != 1 {
+		t.Fatalf("added = %d, want 1", added)
+	}
+	if len(probe.wanted) != 0 {
+		t.Fatalf("queue = %v, want it drained", probe.wanted)
+	}
+	// Still retried, by the sweep or by the page asking again.
+	reader.mu.Lock()
+	reader.failOn = map[string]bool{}
+	reader.mu.Unlock()
+	if added := probe.fill(context.Background(), 12); added != 1 {
+		t.Fatalf("retry added = %d, want 1", added)
+	}
+}
+
+// The queue is a hint from whatever is on screen, so its size is bounded by
+// the caller. It must not become the memory the probe exists to avoid.
+func TestStateProbeBoundsWhatOneRequestCanQueue(t *testing.T) {
+	ids := make([]string, 0, stateProbeWanted*2)
+	for i := range stateProbeWanted * 2 {
+		ids = append(ids, fmt.Sprintf("r%d", i))
+	}
+	probe, _ := probeFixture(t, ids, nil)
+	probe.prioritise(ids)
+	probe.prioritise(ids)
+
+	if len(probe.wanted) > stateProbeWanted {
+		t.Fatalf("queue = %d, want at most %d", len(probe.wanted), stateProbeWanted)
+	}
+}
+
+func TestStateProbeIgnoresRolloutIdsThatAreNotInTheRun(t *testing.T) {
+	probe, reader := probeFixture(t, []string{"a"}, nil)
+	// Nothing stops a caller naming anything; the reader is only ever asked
+	// for it if the probe queues it, so an unknown id must not reach the
+	// service under the operator's credentials.
+	probe.prioritise([]string{"", "not-in-this-run"})
+	probe.fill(context.Background(), 12)
+
+	if _, asked := reader.calls["not-in-this-run"]; asked {
+		t.Fatalf("probe fetched a rollout the run never recorded")
+	}
+	if _, asked := reader.calls[""]; asked {
+		t.Fatalf("probe fetched an empty rollout id")
+	}
+}
