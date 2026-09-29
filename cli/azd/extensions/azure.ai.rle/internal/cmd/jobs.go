@@ -57,7 +57,7 @@ func (a *jobsAction) Run() error {
 	if err != nil {
 		return err
 	}
-	endpoint, err := resolveFinetuneEndpoint(a.endpoint, projectEndpoint)
+	endpoint, err := resolveFinetuneEndpoint(a.endpoint, projectEndpoint, false)
 	if err != nil {
 		return err
 	}

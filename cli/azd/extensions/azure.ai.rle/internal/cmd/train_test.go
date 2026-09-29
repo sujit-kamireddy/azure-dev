@@ -159,12 +159,23 @@ func TestResolveFinetuneEndpointPrefersFlag(t *testing.T) {
 	endpoint, err := resolveFinetuneEndpoint(
 		"https://from-flag.openai.azure.com",
 		"https://account.services.ai.azure.com/api/projects/project",
+		true,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if endpoint != "https://from-flag.openai.azure.com" {
 		t.Fatalf("expected flag value to take precedence, got %q", endpoint)
+	}
+}
+
+func TestTrainCommandRegistersDoNotFakeItFlag(t *testing.T) {
+	flag := newTrainCommand().Flags().Lookup("do-not-fake-it")
+	if flag == nil {
+		t.Fatal("expected --do-not-fake-it flag")
+	}
+	if flag.DefValue != "false" {
+		t.Fatalf("expected --do-not-fake-it to default false, got %q", flag.DefValue)
 	}
 }
 
@@ -199,6 +210,7 @@ func TestResolveFinetuneEndpointDefaultsToTheTrainingService(t *testing.T) {
 	endpoint, err := resolveFinetuneEndpoint(
 		"",
 		"https://account.services.ai.azure.com/api/projects/project",
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -208,12 +220,29 @@ func TestResolveFinetuneEndpointDefaultsToTheTrainingService(t *testing.T) {
 	}
 }
 
+func TestResolveFinetuneEndpointUsesFoundryAccountWhenFacadeIsDisabled(t *testing.T) {
+	t.Setenv(rleTrainEndpointEnvVar, "https://from-env.example.com")
+
+	endpoint, err := resolveFinetuneEndpoint(
+		"",
+		"https://Account.services.ai.azure.com/api/projects/project",
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint != "https://account.openai.azure.com" {
+		t.Fatalf("expected Foundry account endpoint, got %q", endpoint)
+	}
+}
+
 func TestResolveFinetuneEndpointPrefersTheEnvironmentOverTheDefault(t *testing.T) {
 	t.Setenv(rleTrainEndpointEnvVar, "https://from-env.example.com")
 
 	endpoint, err := resolveFinetuneEndpoint(
 		"",
 		"https://account.services.ai.azure.com/api/projects/project",
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -229,6 +258,7 @@ func TestResolveFinetuneEndpointPrefersTheFlagOverTheEnvironment(t *testing.T) {
 	endpoint, err := resolveFinetuneEndpoint(
 		"https://from-flag.openai.azure.com",
 		"https://account.services.ai.azure.com/api/projects/project",
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)

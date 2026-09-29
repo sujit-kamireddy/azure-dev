@@ -26,12 +26,15 @@ const rleTrainingServiceEndpoint = "https://rle-train-facade.ambitiouswater-3eb7
 const rleTrainEndpointEnvVar = "RLE_TRAIN_ENDPOINT"
 
 // resolveFinetuneEndpoint picks the fine-tuning API the RLE commands talk to:
-// the --endpoint flag, else RLE_TRAIN_ENDPOINT, else the RLE training service.
-// All three RLE commands share it so that a job submitted by train is the one
-// jobs and monitor look for.
-func resolveFinetuneEndpoint(flagValue string, projectEndpoint string) (string, error) {
+// the --endpoint flag, then the Foundry account when doNotFakeIt is set, else
+// RLE_TRAIN_ENDPOINT, else the RLE training service. All three RLE commands
+// share it so that a job submitted by train is the one jobs and monitor look for.
+func resolveFinetuneEndpoint(flagValue string, projectEndpoint string, doNotFakeIt bool) (string, error) {
 	if raw := strings.TrimSpace(flagValue); raw != "" {
 		return normalizeFinetuneEndpoint(raw)
+	}
+	if doNotFakeIt {
+		return finetuneEndpointFromFoundryProject(projectEndpoint)
 	}
 	if raw := strings.TrimSpace(os.Getenv(rleTrainEndpointEnvVar)); raw != "" {
 		return normalizeFinetuneEndpoint(raw)
