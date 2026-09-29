@@ -590,11 +590,11 @@ azd ai rle train `
   --training-file .\training.jsonl
 ```
 
-`FOUNDRY_PROJECT_ENDPOINT` identifies the project that owns the named RLE. By
-default, `train` submits through the temporary RLE training facade. Pass
-`--do-not-fake-it` to instead derive the fine-tuning endpoint from the same
-account as `https://<account>.openai.azure.com`. The opt-out ignores
-`RLE_TRAIN_ENDPOINT`; an explicit `--endpoint` still takes precedence.
+`FOUNDRY_PROJECT_ENDPOINT` identifies the project that owns the named RLE. The
+fine-tuning endpoint is normally derived from the same account as
+`https://<account>.openai.azure.com`. Set `RLE_TRAIN_ENDPOINT` to route `train`,
+`jobs`, and job monitoring to a facade or mock service instead. An explicit
+`--endpoint` still takes precedence.
 A training file is required and must point to a regular local training dataset
 file. The extension uploads it to the selected fine-tuning resource with the
 `fine-tune` purpose, then uses the returned file ID when it submits the job.

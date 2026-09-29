@@ -160,7 +160,7 @@ func runMonitorForJob(
 		}
 		projectEndpoint = resolved
 	}
-	finetuneEndpoint, err := resolveFinetuneEndpoint(endpoint, projectEndpoint, false)
+	finetuneEndpoint, err := resolveFinetuneEndpoint(endpoint, projectEndpoint)
 	if err != nil {
 		return err
 	}

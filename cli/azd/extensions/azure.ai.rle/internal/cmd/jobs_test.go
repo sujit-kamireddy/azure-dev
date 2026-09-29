@@ -188,10 +188,11 @@ func TestJobsRequiresProjectEndpoint(t *testing.T) {
 
 func stubFinetuneClientEndpoint(t *testing.T, endpoint string) {
 	t.Helper()
+	t.Setenv(rleTrainEndpointEnvVar, "")
 	originalCreateFinetuneClient := createFinetuneClient
 	createFinetuneClient = func(actualEndpoint string) (*finetuneClient, error) {
-		if actualEndpoint != rleTrainingServiceEndpoint {
-			t.Fatalf("expected the RLE training service, got %q", actualEndpoint)
+		if actualEndpoint != "https://account.openai.azure.com" {
+			t.Fatalf("expected the Foundry account endpoint, got %q", actualEndpoint)
 		}
 		return testFinetuneClientForServer(t, endpoint), nil
 	}

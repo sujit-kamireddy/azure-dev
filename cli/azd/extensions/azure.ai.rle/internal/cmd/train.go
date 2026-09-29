@@ -29,7 +29,6 @@ type rleTrainFlags struct {
 	noBrowser       bool
 	taskCount       int
 	endpoint        string
-	doNotFakeIt     bool
 
 	// Where the merged settings came from, for the line printed before submitting.
 	optionsSource string
@@ -92,13 +91,7 @@ FOUNDRY_PROJECT_ENDPOINT.`,
 		"Train on only the first N tasks of the training dataset, for a smaller run. "+
 			"Sets the max_train_examples training option (0 uses the whole dataset).")
 	cmd.Flags().StringVar(&flags.endpoint, "endpoint", "",
-		fmt.Sprintf("Fine-tuning API endpoint. Defaults to $%s, else the RLE training service.", rleTrainEndpointEnvVar))
-	cmd.Flags().BoolVar(
-		&flags.doNotFakeIt,
-		"do-not-fake-it",
-		false,
-		"Submit to the Foundry account fine-tuning API instead of the temporary RLE training facade.",
-	)
+		fmt.Sprintf("Fine-tuning API endpoint. Defaults to $%s, else the Foundry account endpoint.", rleTrainEndpointEnvVar))
 
 	// model and training-file are not marked required: rle.toml can supply either,
 	// and cobra would reject the run before the manifest is ever read.
@@ -237,7 +230,7 @@ func (a *trainAction) Run() error {
 			),
 		}
 	}
-	endpoint, err := resolveFinetuneEndpoint(a.flags.endpoint, projectEndpoint, a.flags.doNotFakeIt)
+	endpoint, err := resolveFinetuneEndpoint(a.flags.endpoint, projectEndpoint)
 	if err != nil {
 		return err
 	}
