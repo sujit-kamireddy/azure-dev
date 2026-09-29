@@ -154,6 +154,8 @@ func TestRunLogTailReturnsOnlyWhatIsNewSinceTheGivenOffset(t *testing.T) {
 		t.Fatalf("text = %q, want the whole log on a first read", first.Text)
 	}
 
+	// dir is derived from t.TempDir and runLogFile is a fixed package constant.
+	// #nosec G304 -- the test controls the complete path.
 	file, err := os.OpenFile(filepath.Join(dir, runLogFile), os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +163,9 @@ func TestRunLogTailReturnsOnlyWhatIsNewSinceTheGivenOffset(t *testing.T) {
 	if _, err := file.WriteString("step 1 done\n"); err != nil {
 		t.Fatal(err)
 	}
-	file.Close()
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	next, err := artifacts.logTail(first.Offset)
 	if err != nil {

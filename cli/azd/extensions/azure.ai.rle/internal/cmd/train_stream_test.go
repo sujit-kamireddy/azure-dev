@@ -153,10 +153,10 @@ func TestMirrorRejectsAnUnknownEncoding(t *testing.T) {
 func TestMirrorResumesFromWhatIsAlreadyOnDisk(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "rle-harness", "ftjob-1")
-	if err := os.MkdirAll(directory, 0o755); err != nil {
+	if err := os.MkdirAll(directory, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "logs.log"), []byte("already\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "logs.log"), []byte("already\n"), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -232,6 +232,8 @@ func TestFollowTrainingRunMirrorsAndStops(t *testing.T) {
 	}
 
 	directory := filepath.Join(root, "rle-harness", "ftjob-1")
+	// directory is derived from t.TempDir and a fixed test job ID.
+	// #nosec G304 -- the test controls the complete path.
 	metrics, err := os.ReadFile(filepath.Join(directory, "metrics.jsonl"))
 	if err != nil {
 		t.Fatalf("read mirrored metrics: %v", err)
@@ -239,6 +241,8 @@ func TestFollowTrainingRunMirrorsAndStops(t *testing.T) {
 	if string(metrics) != "{\"step\":1}\n" {
 		t.Fatalf("mirrored metrics are %q", metrics)
 	}
+	// directory is derived from t.TempDir and a fixed test job ID.
+	// #nosec G304 -- the test controls the complete path.
 	if _, err := os.ReadFile(filepath.Join(directory, "run_meta.json")); err != nil {
 		t.Fatalf("read mirrored run_meta: %v", err)
 	}

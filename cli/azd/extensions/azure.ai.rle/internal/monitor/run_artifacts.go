@@ -156,10 +156,7 @@ func (r *runArtifacts) logTail(offset int64) (*runLog, error) {
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("seek %s: %w", runLogFile, err)
 	}
-	remaining := size - offset
-	if remaining > maxRunLogBytes {
-		remaining = maxRunLogBytes
-	}
+	remaining := min(size-offset, maxRunLogBytes)
 	buffer := make([]byte, remaining)
 	read, err := io.ReadFull(file, buffer)
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {

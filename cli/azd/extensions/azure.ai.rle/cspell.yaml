@@ -25,6 +25,8 @@ words:
   # Go and Python identifiers appearing in code and payloads.
   - cctx
   - cerr
+  - browsable
+  - ftjob
   - nosniff
   - kwargs
   - noninteractive

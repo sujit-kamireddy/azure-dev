@@ -79,7 +79,7 @@ func runMirrorDir(logsRoot string, jobID string) string {
 
 func newRunMirror(logsRoot string, jobID string) (*runMirror, error) {
 	directory := runMirrorDir(logsRoot, jobID)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
+	if err := os.MkdirAll(directory, 0o750); err != nil {
 		return nil, fmt.Errorf("create local run directory %s: %w", directory, err)
 	}
 	mirror := &runMirror{
@@ -139,9 +139,13 @@ func (m *runMirror) apply(frame trainStreamFrame) error {
 		// would otherwise read a half-written JSON document and log a parse
 		// error the user cannot act on.
 		temporary := path + ".partial"
-		if err := os.WriteFile(temporary, payload, 0o644); err != nil {
+		// frame.Name is restricted to trainStreamArtifacts above.
+		// #nosec G703 -- temporary remains inside the mirror directory.
+		if err := os.WriteFile(temporary, payload, 0o600); err != nil {
 			return fmt.Errorf("write artifact %s: %w", frame.Name, err)
 		}
+		// frame.Name is restricted to trainStreamArtifacts above.
+		// #nosec G703 -- both paths remain inside the mirror directory.
 		if err := os.Rename(temporary, path); err != nil {
 			return fmt.Errorf("replace artifact %s: %w", frame.Name, err)
 		}
@@ -149,7 +153,9 @@ func (m *runMirror) apply(frame trainStreamFrame) error {
 		return nil
 	}
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o644)
+	// frame.Name is restricted to trainStreamArtifacts above.
+	// #nosec G304,G703 -- path remains inside the mirror directory.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open artifact %s: %w", frame.Name, err)
 	}
@@ -332,7 +338,9 @@ func newTrainStreamDialError(cause error, response *http.Response) error {
 		"azd ai rle jobs."
 	if response != nil {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
-		response.Body.Close()
+		if err := response.Body.Close(); err != nil {
+			return fmt.Errorf("close run stream error response: %w", err)
+		}
 		return &azdext.LocalError{
 			Message: fmt.Sprintf(
 				"Could not open the run stream (HTTP %d): %s", response.StatusCode, strings.TrimSpace(string(body))),
