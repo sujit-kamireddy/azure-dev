@@ -18,10 +18,10 @@ import (
 )
 
 const (
-	finetuneFilesPath			= "/openai/v1/files"
-	finetuneFileImportTimeout		= 5 * time.Minute
-	finetuneFileImportInitialPollInterval	= 2 * time.Second
-	finetuneFileImportMaxPollInterval	= 10 * time.Second
+	finetuneFilesPath                     = "/openai/v1/files"
+	finetuneFileImportTimeout             = 5 * time.Minute
+	finetuneFileImportInitialPollInterval = 2 * time.Second
+	finetuneFileImportMaxPollInterval     = 10 * time.Second
 )
 
 type finetuneFileResource struct {
