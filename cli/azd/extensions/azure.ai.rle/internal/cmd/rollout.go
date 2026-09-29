@@ -194,7 +194,16 @@ func (a *rolloutAction) Run() error {
 	if err != nil {
 		return err
 	}
-	if agentInput == nil {
+	if target.isGymOpenEnv {
+		if agentInput != nil {
+			return &azdext.LocalError{
+				Message:    "--agent-input and --agent-input-file are not supported for Gym/OpenEnv rollouts.",
+				Code:       "rle_rollout_gym_agent_input_not_supported",
+				Category:   azdext.LocalErrorCategoryUser,
+				Suggestion: "Use --task or --task-file to set the Gym/OpenEnv reset payload.",
+			}
+		}
+	} else if agentInput == nil {
 		agentInput = task
 	}
 
