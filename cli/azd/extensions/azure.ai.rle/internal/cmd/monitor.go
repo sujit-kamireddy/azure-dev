@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var runRolloutMonitor = monitor.Run
@@ -205,15 +203,6 @@ func resolveRolloutOutputDir(directory string) (string, error) {
 		return "", fmt.Errorf("resolve rollout artifact directory: %w", err)
 	}
 	return path, nil
-}
-
-// monitorIsInteractive reports whether the dashboard has someone to show itself
-// to. The monitor serves until Ctrl+C, so opening it for a script or a CI job
-// would hang a rollout that has already done its work. A redirected stdout is
-// the signal that nobody is watching.
-var monitorIsInteractive = func(out io.Writer) bool {
-	file, ok := out.(*os.File)
-	return ok && term.IsTerminal(int(file.Fd()))
 }
 
 func invalidMonitorIDError(err error) error {

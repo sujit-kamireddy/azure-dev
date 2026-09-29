@@ -6,6 +6,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -140,9 +141,7 @@ func (a *trainAction) resolveTrainSettings() (map[string]any, error) {
 			if a.flags.maxEpisodeSteps == 0 && train.MaxEpisodeSteps != nil {
 				a.flags.maxEpisodeSteps = *train.MaxEpisodeSteps
 			}
-			for optionName, value := range train.Options {
-				options[optionName] = value
-			}
+			maps.Copy(options, train.Options)
 			if len(options) > 0 {
 				a.flags.optionsSource = project.RleConfigFile
 			}

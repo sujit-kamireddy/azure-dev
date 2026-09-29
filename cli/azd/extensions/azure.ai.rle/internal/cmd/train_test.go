@@ -709,17 +709,15 @@ func writeTrainRleConfigWithTrain(t *testing.T, dir string, train *project.RleTr
 	}
 }
 
-func strPtr(value string) *string { return &value }
-
 func TestTrainReadsSettingsFromRleConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	steps := 7
 	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
-		Model:           strPtr("qwen3-32b-1"),
-		TrainingFile:    strPtr("job_data/train.jsonl"),
-		ValidationFile:  strPtr("job_data/validation.jsonl"),
-		Suffix:          strPtr("nightly"),
+		Model:           new("qwen3-32b-1"),
+		TrainingFile:    new("job_data/train.jsonl"),
+		ValidationFile:  new("job_data/validation.jsonl"),
+		Suffix:          new("nightly"),
 		MaxEpisodeSteps: &steps,
 		Options:         map[string]any{"group_size": int64(4)},
 	})
@@ -754,9 +752,9 @@ func TestTrainFlagsOverrideRleConfigTrainSection(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
-		Model:        strPtr("from-manifest"),
-		TrainingFile: strPtr("manifest.jsonl"),
-		Suffix:       strPtr("manifest"),
+		Model:        new("from-manifest"),
+		TrainingFile: new("manifest.jsonl"),
+		Suffix:       new("manifest"),
 	})
 
 	action := &trainAction{flags: &rleTrainFlags{
@@ -780,8 +778,8 @@ func TestTaskCountSetsTheDatasetLimitOption(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
-		Model:        strPtr("qwen3-32b-1"),
-		TrainingFile: strPtr("train.jsonl"),
+		Model:        new("qwen3-32b-1"),
+		TrainingFile: new("train.jsonl"),
 	})
 
 	action := &trainAction{flags: &rleTrainFlags{taskCount: 12}}
@@ -798,8 +796,8 @@ func TestTaskCountOverridesTheManifestLimit(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
-		Model:        strPtr("qwen3-32b-1"),
-		TrainingFile: strPtr("train.jsonl"),
+		Model:        new("qwen3-32b-1"),
+		TrainingFile: new("train.jsonl"),
 		Options:      map[string]any{trainTaskCountOption: int64(500)},
 	})
 
@@ -819,8 +817,8 @@ func TestTaskCountIsOmittedWhenUnset(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
-		Model:        strPtr("qwen3-32b-1"),
-		TrainingFile: strPtr("train.jsonl"),
+		Model:        new("qwen3-32b-1"),
+		TrainingFile: new("train.jsonl"),
 	})
 
 	action := &trainAction{flags: &rleTrainFlags{}}
@@ -859,8 +857,8 @@ func TestTrainSectionIsSeparateFromPublishedDefaults(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	writeTrainRleConfigWithTrain(t, dir, &project.RleTrainSettings{
-		Model:        strPtr("qwen3-32b-1"),
-		TrainingFile: strPtr("train.jsonl"),
+		Model:        new("qwen3-32b-1"),
+		TrainingFile: new("train.jsonl"),
 		Options:      map[string]any{"group_size": int64(4)},
 	})
 

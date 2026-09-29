@@ -55,7 +55,9 @@ az login
 The extension also supports `azd auth login` and other development credentials
 from Azure's default credential chain.
 
-Register the RLE development source and install the extension:
+Register the appropriate RLE source and install the extension.
+
+For the internal development team:
 
 ```powershell
 azd extension source add `
@@ -67,6 +69,18 @@ azd extension install azure.ai.rle --source rle-dev
 azd ai rle version
 ```
 
+After the first external version is published, external preview customers use:
+
+```powershell
+azd extension source add `
+  --name rle-ext `
+  --type url `
+  --location https://raw.githubusercontent.com/sujit-kamireddy/azure-dev/main/cli/azd/extensions/registry.rle-ext.json
+
+azd extension install azure.ai.rle --source rle-ext
+azd ai rle version
+```
+
 List registered extension sources at any time with:
 
 ```powershell
@@ -75,9 +89,11 @@ azd extension source list
 
 ### Extension updates
 
-The extension checks the RLE development registry when an RLE command runs. A
-non-breaking update does not interrupt the command. After the command completes,
-the CLI displays:
+The extension checks the same release channel from which its artifact was
+built: internal artifacts check `rle-dev`, while external artifacts check
+`rle-ext`. Releases in one channel never notify or block users of the other.
+A non-breaking update does not interrupt the command. After the command
+completes, the CLI displays:
 
 ```text
 RLE extension update available: <version>
@@ -753,13 +769,15 @@ azd x publish
 azd extension install azure.ai.rle --source local --force
 ```
 
-## Prepare a development release
+## Prepare an internal or external release
 
-The release script currently builds the Windows AMD64 extension artifact. Run it
-from `cli\azd\extensions\azure.ai.rle`.
+Run the audience-specific release script from
+`cli\azd\extensions\azure.ai.rle`. Both wrappers use
+`prepare-release.ps1` for the shared build, packaging, registry, and validation
+logic.
 
-For a normal non-breaking release, choose the semantic-version component to
-increment:
+For a normal internal, non-breaking release, choose the semantic-version
+component to increment:
 
 ```powershell
 .\prepare-dev-release.ps1 -VersionBump patch
@@ -771,15 +789,32 @@ The script preserves the existing prerelease suffix. For example,
 `0.8.8-preview` becomes `0.8.9-preview` with `-VersionBump patch`. It updates
 `version.txt` and `extension.yaml`, cross-compiles the extension for every
 supported platform (`windows`, `darwin`, and `linux` on both `amd64` and
-`arm64`), writes those artifacts under `artifacts\rle-dev\<version>`, and
-updates `registry.rle-dev.json` with each artifact's checksum and GitHub URL.
+`arm64`), writes artifacts under `artifacts\<channel>\<version>`, and updates
+`registry.<channel>.json` with each artifact's checksum and GitHub URL.
 `azd x pack` archives linux artifacts as `.tar.gz` and every other platform as
-`.zip`. The script runs on any host Go can cross-compile from.
+`.zip`. It also embeds that channel's registry URL in every binary, which keeps
+internal and external update enforcement isolated. The script runs on any host
+Go can cross-compile from.
+
+Prepare an external release the same way:
+
+```powershell
+.\prepare-ext-release.ps1 -VersionBump patch
+```
+
+Each wrapper accepts only `-VersionBump major|minor|patch` and the optional
+`-BreakingChanges` switch. When omitted, `-VersionBump` defaults to `patch`:
+
+```powershell
+.\prepare-dev-release.ps1
+.\prepare-ext-release.ps1
+```
 
 Mark a release as breaking only when users must update before continuing:
 
 ```powershell
 .\prepare-dev-release.ps1 -VersionBump patch -BreakingChanges
+.\prepare-ext-release.ps1 -VersionBump patch -BreakingChanges
 ```
 
 Non-breaking is the default; do not pass `-BreakingChanges` for a normal release.

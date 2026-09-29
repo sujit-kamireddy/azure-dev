@@ -6,6 +6,7 @@ package monitor
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"regexp"
 	"strings"
 	"sync"
@@ -52,7 +53,7 @@ const (
 // it wrapped, so the last match is the answer rather than the first.
 func exceptionFromTraceback(text string) (string, string) {
 	kind, message := "", ""
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if match := pythonException.FindStringSubmatch(strings.TrimSpace(line)); match != nil {
 			kind, message = match[1], strings.TrimSpace(match[2])
 		}
@@ -134,9 +135,7 @@ func (p *stateProbe) snapshot() (map[string]executionState, int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	out := make(map[string]executionState, len(p.states))
-	for id, state := range p.states {
-		out[id] = state
-	}
+	maps.Copy(out, p.states)
 	return out, len(p.states)
 }
 
@@ -189,9 +188,7 @@ func (p *stateProbe) fill(ctx context.Context, limit int) int {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for range min(p.workers, len(queued)) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for id := range work {
 				snapshot, err := p.reader.Get(ctx, id)
 				if err != nil {
@@ -203,7 +200,7 @@ func (p *stateProbe) fill(ctx context.Context, limit int) int {
 				added++
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 	for _, id := range queued {
 		select {

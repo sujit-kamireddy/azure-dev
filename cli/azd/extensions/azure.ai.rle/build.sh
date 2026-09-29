@@ -34,6 +34,7 @@ else
 fi
 
 APP_PATH="$EXTENSION_ID/internal/cmd"
+REGISTRY_URL="${RLE_REGISTRY_URL:-https://raw.githubusercontent.com/sujit-kamireddy/azure-dev/main/cli/azd/extensions/registry.rle-dev.json}"
 
 # Loop through platforms and build
 for PLATFORM in "${PLATFORMS[@]}"; do
@@ -53,7 +54,7 @@ for PLATFORM in "${PLATFORMS[@]}"; do
 
     # Set environment variables for Go build
     GOOS=$OS GOARCH=$ARCH go build \
-        -ldflags="-X '$APP_PATH.Version=$EXTENSION_VERSION' -X '$APP_PATH.Commit=$COMMIT' -X '$APP_PATH.BuildDate=$BUILD_DATE'" \
+        -ldflags="-X '$APP_PATH.Version=$EXTENSION_VERSION' -X '$APP_PATH.Commit=$COMMIT' -X '$APP_PATH.BuildDate=$BUILD_DATE' -X '$APP_PATH.RegistryURL=$REGISTRY_URL'" \
         -o "$OUTPUT_NAME"
 
     if [ $? -ne 0 ]; then

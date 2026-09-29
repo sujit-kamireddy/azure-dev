@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -46,7 +47,7 @@ func TestFinetuneClientUploadsLocalFileAsMultipartForm(t *testing.T) {
 		parts := map[string]string{}
 		for {
 			part, err := reader.NextPart()
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {

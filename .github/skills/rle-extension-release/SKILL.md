@@ -2,15 +2,17 @@
 name: rle-extension-release
 description: >-
   **WORKFLOW SKILL** — Publishes a new version of the `azure.ai.rle` extension to the
-  `rle-dev` registry by driving `prepare-dev-release.ps1`. Aligns version files, cross-compiles
-  all six platform artifacts, updates `registry.rle-dev.json`, optionally marks the release
-  as a forced (breaking) update, verifies the result, and opens the PR.
+  internal `rle-dev` or external `rle-ext` registry through separate release wrappers.
+  Aligns version files, cross-compiles all six platform artifacts, updates the selected
+  registry, optionally marks the release as a forced (breaking) update, verifies the result,
+  and opens the PR.
 
   INVOKES: pwsh, azd x (microsoft.azd.extensions), go, git CLI, gh CLI.
 
   USE FOR: publish rle extension, release rle extension, push rle to registry,
-  force users to update rle, breaking update rle, prepare-dev-release, bump rle registry,
-  new rle dev release, rle-dev registry.
+  force users to update rle, breaking update rle, prepare-dev-release, prepare-ext-release,
+  bump rle registry,
+  new rle dev release, rle-dev registry, external RLE release, rle-ext registry.
 
   DO NOT USE FOR: writing CHANGELOG entries (use changelog-generation), releasing azd core,
   releasing non-RLE extensions, publishing to the public azd registry.
@@ -18,7 +20,7 @@ description: >-
 
 # rle-extension-release
 
-**WORKFLOW SKILL** — Cuts a development release of the `azure.ai.rle` extension.
+**WORKFLOW SKILL** — Cuts an internal or external release of the `azure.ai.rle` extension.
 
 INVOKES: `pwsh`, `azd x`, `go`, `git` CLI, `gh` CLI.
 
@@ -32,8 +34,8 @@ artifacts and publishes them to the registry.
 
 ### Step 1 — Check the toolchain
 
-All three are hard requirements. `prepare-dev-release.ps1` throws on missing `go`, and fails
-at the build step on missing `azd x`.
+All three are hard requirements. The release scripts throw on missing `go` and
+fail at the build step on missing `azd x`.
 
 ```bash
 pwsh --version          # script is PowerShell
@@ -54,9 +56,9 @@ the script entirely:
 
 | source | purpose |
 |---|---|
-| `version.txt` | what `-VersionBump` reads and what `-Version` defaults to |
+| `version.txt` | what `-VersionBump` reads |
 | `extension.yaml` (`version:`) | shipped inside every artifact |
-| `registry.rle-dev.json` | what users resolve against |
+| `registry.rle-dev.json` or `registry.rle-ext.json` | what users in the selected channel resolve against |
 
 ```bash
 cat version.txt
@@ -70,19 +72,28 @@ Then pick a path:
   next version, preserves the prerelease suffix, and writes **both** files for you. Preferred.
 - **They disagree** → `-VersionBump` throws
   `Version 'X' in version.txt must match version 'Y' in extension.yaml.` Decide which is
-  intended (`CHANGELOG.md` having a section for one of them is strong evidence), align
-  `version.txt` to `extension.yaml` by hand, then use explicit `-Version`.
-
-**Gotcha:** explicit `-Version` skips the bump block, so it does **not** write `version.txt`.
-Align it yourself or the *next* release's `-VersionBump` throws again. `-Version` and
-`-VersionBump` together also throw — they are mutually exclusive.
+  intended (`CHANGELOG.md` having a section for one of them is strong evidence), then align
+  the two files before releasing.
 
 Registry versions need not be contiguous. Skipped versions that were never published are
-harmless; the update check compares by semver ordering.
+harmless; the update check compares by semver ordering. The channels have independent
+histories: external users see only versions deliberately promoted to `rle-ext`.
 
-### Step 3 — Decide whether the release is breaking
+### Step 3 — Select the channel and decide whether the release is breaking
 
-`internal/cmd/breaking_update.go:114` OR-accumulates `breakingChanges` over **every registry
+| channel | audience | registry | artifacts |
+|---|---|---|---|
+| `rle-dev` | internal development team | `registry.rle-dev.json` | `artifacts/rle-dev/<version>` |
+| `rle-ext` | external preview customers | `registry.rle-ext.json` | `artifacts/rle-ext/<version>` |
+
+Use `prepare-dev-release.ps1` for internal releases and
+`prepare-ext-release.ps1` for external releases. Both are thin wrappers over
+`prepare-release.ps1`, which embeds the wrapper-selected registry URL in the
+binaries. An external artifact therefore never checks the internal registry for
+updates. `VersionBump` defaults to `patch`; pass `minor` or `major` explicitly
+only when needed.
+
+`internal/cmd/breaking_update.go` OR-accumulates `breakingChanges` over **every registry
 version newer than the installed one**. If any is set, lifecycle commands fail with
 `rle_breaking_update_required` — "Update the RLE extension to X before continuing." `version`
 and `--help` still work.
@@ -105,20 +116,19 @@ The switch is three-state — this matters:
 # preferred, versions already aligned
 pwsh -NoProfile -File ./prepare-dev-release.ps1 -VersionBump patch -BreakingChanges
 
-# recovery path, when version.txt was realigned by hand
-pwsh -NoProfile -File ./prepare-dev-release.ps1 -Version <x.y.z-preview> -BreakingChanges
+# external customer channel
+pwsh -NoProfile -File ./prepare-ext-release.ps1 -VersionBump patch
 ```
 
 Takes several minutes — it cross-compiles six binaries. Allow at least 300s before treating it
 as hung.
 
-It wipes and recreates `bin/` and `artifacts/rle-dev/<version>/`, runs
+It wipes and recreates `bin/` and `artifacts/<channel>/<version>/`, runs
 `azd x build --all --skip-install` then `azd x pack`, validates the artifact set, re-reads the
-registry to **preserve `breakingChanges` flags on older versions** (`azd x publish` drops
+selected registry to **preserve `breakingChanges` flags on older versions** (`azd x publish` drops
 them), publishes, applies the new flag, and rewrites artifact URLs to
-`https://raw.githubusercontent.com/<Repository>/<RepositoryBranch>/<path>` — defaulting to
-`sujit-kamireddy/azure-dev` and `main`. Override with `-Repository` / `-RepositoryBranch` when
-releasing from a different fork.
+the channel's fixed location under
+`https://raw.githubusercontent.com/sujit-kamireddy/azure-dev/main/`.
 
 `Skipped Building extension` in the **pack** phase is normal — `azd x pack --input bin`
 consumes the binaries the build phase already produced.
@@ -130,7 +140,7 @@ The script validates the artifact set and platform keys itself, so check the thi
 ```bash
 python3 -c "
 import json
-ext = json.load(open('../registry.rle-dev.json'))['extensions'][0]
+ext = json.load(open('../registry.<channel>.json'))['extensions'][0]
 print('versions:', [v['version'] for v in ext['versions']])
 print('flags:', {v['version']: v.get('breakingChanges') for v in ext['versions'] if 'breakingChanges' in v})
 "
@@ -147,7 +157,7 @@ print('flags:', {v['version']: v.get('breakingChanges') for v in ext['versions']
 
 ```bash
 mkdir -p /tmp/rlecheck
-tar xzf artifacts/rle-dev/<version>/azure-ai-rle-linux-amd64.tar.gz -C /tmp/rlecheck
+tar xzf artifacts/<channel>/<version>/azure-ai-rle-linux-amd64.tar.gz -C /tmp/rlecheck
 /tmp/rlecheck/azure-ai-rle-linux-amd64 version     # must print the new version
 grep '^version:' /tmp/rlecheck/extension.yaml      # must match
 ```
@@ -158,12 +168,12 @@ The binary name inside the archive is platform-suffixed and matches the registry
 ### Step 6 — Commit and open the PR
 
 Artifacts **are** checked in: `.gitignore` ignores `bin/` but explicitly negates
-`artifacts/rle-dev/**`. Commit them with the registry and version files in a single commit, or
+both channel artifact trees. Commit them with the selected registry and version files in a single commit, or
 the registry will reference URLs that 404.
 
 ```bash
 git checkout -b rle/release-<version>
-git add version.txt extension.yaml ../registry.rle-dev.json artifacts/rle-dev/<version>
+git add version.txt extension.yaml ../registry.<channel>.json artifacts/<channel>/<version>
 git commit   # include the Co-authored-by trailer if an agent authored the change
 git push -u origin rle/release-<version>
 gh pr create --base main --title "Release RLE extension <version>"
@@ -179,20 +189,16 @@ merges.** Users will resolve 404s if the registry lands without the artifacts.
 
 ## Error Handling
 
-- `Version 'X' in version.txt must match version 'Y' in extension.yaml.` → Step 2; align by
-  hand, then use explicit `-Version`.
-- `Version and VersionBump cannot be specified together.` → pass exactly one.
-- `Version 'X' must match the version in extension.yaml.` → the explicit `-Version` disagrees
-  with the manifest; fix the manifest or pass the manifest's version.
+- `Version 'X' in version.txt must match version 'Y' in extension.yaml.` → Step 2; align the
+  files, then rerun the release.
 - `Go is required to cross-compile…` → install Go and put it on `PATH`.
 - `Missing packaged artifacts: …` / `Unexpected packaged artifacts: …` → the build produced the
   wrong set; inspect `bin/` and re-run. A stale `bin/` cannot cause this (the script wipes it),
   so suspect a build failure for one `GOOS`/`GOARCH`.
 - `Registry is missing platform entries: …` → `azd x publish` did not ingest every artifact;
-  confirm all six exist under `artifacts/rle-dev/<version>/`.
+  confirm all six exist under `artifacts/<channel>/<version>/`.
 - `Expected one '<version>' entry in the registry, but found 0.` → the publish silently
   no-op'd; check the `azd x publish` output above the throw.
-- `OutputDirectory must be inside the repository…` → drop the custom `-OutputDirectory`.
 - Registry `breakingChanges` flags vanished from older versions → the preservation pass did not
   run, meaning the script exited between publish and rewrite. Restore from `git diff` and re-run.
 

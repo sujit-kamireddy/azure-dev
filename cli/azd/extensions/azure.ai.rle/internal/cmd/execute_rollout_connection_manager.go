@@ -290,7 +290,7 @@ func (m *executeRolloutConnectionManager) activeSocket(
 			// Do not expose a replacement failure as executeRolloutHandshakeError.
 			// The outer command may fall back to HTTP only before any socket has been
 			// used; after that, changing transports could replay an ambiguous rollout.
-			return nil, fmt.Errorf("replace Execute Rollout connection: %v", err)
+			return nil, errors.New("replace Execute Rollout connection: " + err.Error())
 		}
 		return nil, err
 	}

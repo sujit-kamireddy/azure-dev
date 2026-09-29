@@ -21,7 +21,13 @@ type finetuneFileResource struct {
 }
 
 func (c *finetuneClient) uploadFile(ctx context.Context, filePath string) (*finetuneFileResource, error) {
-	file, err := os.Open(filePath)
+	root, err := os.OpenRoot(filepath.Dir(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("open local file directory: %w", err)
+	}
+	defer root.Close()
+
+	file, err := root.Open(filepath.Base(filePath))
 	if err != nil {
 		return nil, fmt.Errorf("open local file: %w", err)
 	}
