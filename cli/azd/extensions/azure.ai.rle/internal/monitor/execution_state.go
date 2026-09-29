@@ -143,7 +143,7 @@ func (p *stateProbe) snapshot() (map[string]executionState, int) {
 	return out, len(p.states)
 }
 
-// prioritise moves rollouts to the front of the probe's work.
+// prioritize moves rollouts to the front of the probe's work.
 //
 // The sweep runs oldest first, which is the order the run happened in but not
 // the order anyone reads it: a viewer filters the list to the step that just
@@ -160,7 +160,7 @@ func (p *stateProbe) snapshot() (map[string]executionState, int) {
 // the index is skipped rather than looked up: this is a hint about what is on
 // screen, and a page showing a rollout necessarily got it from the index, so a
 // miss means a stale index and the next poll asks again.
-func (p *stateProbe) prioritise(ids []string) {
+func (p *stateProbe) prioritize(ids []string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	queued := make(map[string]struct{}, len(p.wanted))
