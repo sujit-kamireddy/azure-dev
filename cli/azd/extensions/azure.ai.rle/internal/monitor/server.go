@@ -195,7 +195,7 @@ func newHandler(src source, host string) (http.Handler, error) {
 			return
 		}
 		if wanted := r.URL.Query().Get("want"); wanted != "" {
-			src.probe.prioritise(strings.Split(wanted, ","))
+			src.probe.prioritize(strings.Split(wanted, ","))
 		}
 		states, known := src.probe.snapshot()
 		encoded, err := json.Marshal(map[string]any{

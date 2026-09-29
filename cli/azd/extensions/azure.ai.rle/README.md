@@ -613,7 +613,8 @@ fine-tuning endpoint is normally derived from the same account as
 `--endpoint` still takes precedence.
 A training file is required and must point to a regular local training dataset
 file. The extension uploads it to the selected fine-tuning resource with the
-`fine-tune` purpose, then uses the returned file ID when it submits the job.
+`fine-tune` purpose, waits up to five minutes for the asynchronous file import
+to reach `processed`, then uses the returned file ID when it submits the job.
 The validation file is optional and follows the same local-file upload flow.
 Use `--endpoint` to target a different fine-tuning resource for a single
 invocation.

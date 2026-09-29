@@ -236,7 +236,7 @@ func mustQuote(text string) string {
 
 func TestStateProbeClassifiesRequestedRolloutsBeforeTheSweepReachesThem(t *testing.T) {
 	probe, _ := probeFixture(t, []string{"a", "b", "c", "d", "e", "f"}, nil)
-	probe.prioritise([]string{"f", "e"})
+	probe.prioritize([]string{"f", "e"})
 
 	// A batch of three: the two asked for, then the sweep carries on from the
 	// front, so asking for a screenful does not stall the background pass.
@@ -263,12 +263,12 @@ func TestStateProbeClassifiesRequestedRolloutsBeforeTheSweepReachesThem(t *testi
 func TestStateProbeRereadsNothingWhenAViewerKeepsAsking(t *testing.T) {
 	probe, reader := probeFixture(t, []string{"a", "b", "c"}, nil)
 	for range 3 {
-		probe.prioritise([]string{"c"})
+		probe.prioritize([]string{"c"})
 	}
 	if added := probe.fill(context.Background(), 12); added != 3 {
 		t.Fatalf("added = %d, want 3", added)
 	}
-	probe.prioritise([]string{"c", "a"})
+	probe.prioritize([]string{"c", "a"})
 	if added := probe.fill(context.Background(), 12); added != 0 {
 		t.Fatalf("a request for classified rollouts added = %d, want 0", added)
 	}
@@ -284,7 +284,7 @@ func TestStateProbeRereadsNothingWhenAViewerKeepsAsking(t *testing.T) {
 // of the queue, where it would block every later request behind it.
 func TestStateProbeDoesNotLetAnUnreadableRequestBlockTheQueue(t *testing.T) {
 	probe, reader := probeFixture(t, []string{"a", "b"}, map[string]bool{"a": true})
-	probe.prioritise([]string{"a", "b"})
+	probe.prioritize([]string{"a", "b"})
 
 	if added := probe.fill(context.Background(), 12); added != 1 {
 		t.Fatalf("added = %d, want 1", added)
@@ -309,8 +309,8 @@ func TestStateProbeBoundsWhatOneRequestCanQueue(t *testing.T) {
 		ids = append(ids, fmt.Sprintf("r%d", i))
 	}
 	probe, _ := probeFixture(t, ids, nil)
-	probe.prioritise(ids)
-	probe.prioritise(ids)
+	probe.prioritize(ids)
+	probe.prioritize(ids)
 
 	if len(probe.wanted) > stateProbeWanted {
 		t.Fatalf("queue = %d, want at most %d", len(probe.wanted), stateProbeWanted)
@@ -322,7 +322,7 @@ func TestStateProbeIgnoresRolloutIdsThatAreNotInTheRun(t *testing.T) {
 	// Nothing stops a caller naming anything; the reader is only ever asked
 	// for it if the probe queues it, so an unknown id must not reach the
 	// service under the operator's credentials.
-	probe.prioritise([]string{"", "not-in-this-run"})
+	probe.prioritize([]string{"", "not-in-this-run"})
 	probe.fill(context.Background(), 12)
 
 	if _, asked := reader.calls["not-in-this-run"]; asked {
