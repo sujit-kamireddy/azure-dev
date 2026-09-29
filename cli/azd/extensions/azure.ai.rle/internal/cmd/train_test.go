@@ -168,9 +168,6 @@ func TestResolveFinetuneEndpointPrefersFlag(t *testing.T) {
 	}
 }
 
-// The Foundry derivation is not reached while the training service endpoint is
-// hardcoded, but it is what the commands go back to once an account's own
-// endpoint serves RLE jobs, so it stays covered.
 func TestFinetuneEndpointDerivesAccountFromFoundryProject(t *testing.T) {
 	endpoint, err := finetuneEndpointFromFoundryProject(
 		"https://My-Account.services.ai.azure.com/api/projects/project",
@@ -191,20 +188,20 @@ func TestFinetuneEndpointRejectsInvalidFoundryHost(t *testing.T) {
 	}
 }
 
-// Without a flag the commands must reach the service that actually runs RLE
-// jobs, not the Foundry account's own fine-tuning API, which cannot accept them.
-func TestResolveFinetuneEndpointDefaultsToTheTrainingService(t *testing.T) {
+// Without an endpoint override, commands derive the fine-tuning endpoint from
+// the Foundry project account.
+func TestResolveFinetuneEndpointDefaultsToTheFoundryAccount(t *testing.T) {
 	t.Setenv(rleTrainEndpointEnvVar, "")
 
 	endpoint, err := resolveFinetuneEndpoint(
 		"",
-		"https://account.services.ai.azure.com/api/projects/project",
+		"https://Account.services.ai.azure.com/api/projects/project",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if endpoint != rleTrainingServiceEndpoint {
-		t.Fatalf("expected the RLE training service, got %q", endpoint)
+	if endpoint != "https://account.openai.azure.com" {
+		t.Fatalf("expected Foundry account endpoint, got %q", endpoint)
 	}
 }
 
@@ -289,6 +286,7 @@ func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(foundryProjectEndpointEnvVar, "https://account.services.ai.azure.com/api/projects/project")
+	t.Setenv(rleTrainEndpointEnvVar, "")
 
 	client := newFinetuneClientWithCredential("https://account.openai.azure.com", &testTokenCredential{})
 	uploadCount := 0
@@ -331,8 +329,8 @@ func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
 
 	originalCreateClient := createFinetuneClient
 	createFinetuneClient = func(endpoint string) (*finetuneClient, error) {
-		if endpoint != rleTrainingServiceEndpoint {
-			t.Fatalf("expected the RLE training service, got %q", endpoint)
+		if endpoint != "https://account.openai.azure.com" {
+			t.Fatalf("expected the Foundry account endpoint, got %q", endpoint)
 		}
 		return client, nil
 	}
