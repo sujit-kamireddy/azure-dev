@@ -16,10 +16,14 @@ import (
 )
 
 const (
-	rleRegistryURL = "https://raw.githubusercontent.com/sujit-kamireddy/azure-dev/main/" +
+	rleDevRegistryURL = "https://raw.githubusercontent.com/sujit-kamireddy/azure-dev/main/" +
 		"cli/azd/extensions/registry.rle-dev.json"
 	maxRegistryResponseBytes = 4 * 1024 * 1024
 )
+
+// RegistryURL is set at build time so each release channel checks only the
+// registry from which its artifact was installed.
+var RegistryURL = rleDevRegistryURL
 
 type extensionUpdate struct {
 	LatestVersion string
@@ -48,7 +52,7 @@ type rleRegistry struct {
 func newRegistryExtensionUpdateChecker() *registryExtensionUpdateChecker {
 	return &registryExtensionUpdateChecker{
 		client:      &http.Client{Timeout: 5 * time.Second},
-		registryURL: rleRegistryURL,
+		registryURL: RegistryURL,
 	}
 }
 

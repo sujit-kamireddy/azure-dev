@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -27,11 +28,29 @@ func (f extensionUpdateCheckerFunc) Check(
 	return f(ctx, currentVersion)
 }
 
-func TestNewRegistryExtensionUpdateCheckerUsesDefaultRegistry(t *testing.T) {
+func TestNewRegistryExtensionUpdateCheckerUsesConfiguredRegistry(t *testing.T) {
+	checker := newRegistryExtensionUpdateChecker()
+	expected := os.Getenv("RLE_TEST_EXPECTED_REGISTRY_URL")
+	if expected == "" {
+		expected = RegistryURL
+	}
+
+	if checker.registryURL != expected {
+		t.Fatalf("expected configured registry %q, got %q", expected, checker.registryURL)
+	}
+}
+
+func TestNewRegistryExtensionUpdateCheckerUsesBuildRegistry(t *testing.T) {
+	originalRegistryURL := RegistryURL
+	RegistryURL = "https://example.test/registry.rle-ext.json"
+	t.Cleanup(func() {
+		RegistryURL = originalRegistryURL
+	})
+
 	checker := newRegistryExtensionUpdateChecker()
 
-	if checker.registryURL != rleRegistryURL {
-		t.Fatalf("expected default registry %q, got %q", rleRegistryURL, checker.registryURL)
+	if checker.registryURL != RegistryURL {
+		t.Fatalf("expected build registry %q, got %q", RegistryURL, checker.registryURL)
 	}
 }
 
