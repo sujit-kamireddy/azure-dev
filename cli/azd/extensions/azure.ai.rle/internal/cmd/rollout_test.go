@@ -201,6 +201,43 @@ func TestRolloutRunDefaultsAgentInputToTaskWhenUnset(t *testing.T) {
 	}
 }
 
+func TestRolloutRejectsAgentInputForGymOpenEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	schemaVersion := project.CurrentRleManifestSchemaVersion
+	if err := project.WriteRleConfig(dir, project.RleConfig{
+		SchemaVersion: &schemaVersion,
+		Rle: project.RleManifest{
+			Name:    "math_rl",
+			Version: "1.0.6",
+			Type:    project.RleTypeGym,
+			Subtype: project.RleSubtypeOpenEnv,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stubRleClientEndpoint(t, "https://rle.test")
+
+	command := newRolloutCommand()
+	command.SetArgs([]string{
+		"math_rl", "--version", "1.0.6",
+		"--model", "Qwen/Qwen3-32B",
+		"--task", `{"seed":0}`,
+		"--agent-input", `{"answer":"42"}`,
+	})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&output)
+
+	err := command.Execute()
+	if err == nil {
+		t.Fatal("expected Gym/OpenEnv rollout to reject agent input")
+	}
+	if !strings.Contains(err.Error(), "--agent-input and --agent-input-file are not supported") {
+		t.Fatalf("expected Gym agent-input validation error, got %v", err)
+	}
+}
+
 func TestNewRolloutIDReturnsUniqueHexValues(t *testing.T) {
 	first, err := newRolloutID()
 	if err != nil {
@@ -262,6 +299,9 @@ func TestRolloutFallsBackToRleConfigModelDefault(t *testing.T) {
 		}
 		if request.Policy == nil || request.Policy.ModelName != modelName {
 			t.Fatalf("expected model default from rle.toml to be forwarded, got %#v", request.Policy)
+		}
+		if request.AgentInput != nil {
+			t.Fatalf("expected Gym/OpenEnv request to omit agent input, got %s", request.AgentInput)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"rollout_id": "` + request.RolloutID + `", "reward": 1, "success": true}`))
