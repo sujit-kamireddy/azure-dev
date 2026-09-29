@@ -776,6 +776,101 @@
               "url": "C:\\Users\\swatisinghvi\\Code\\azure-dev\\cli\\azd\\extensions\\azure.ai.rle\\artifacts\\rle-dev\\0.8.17-preview\\azure-ai-rle-windows-arm64.zip"
             }
           }
+        },
+        {
+          "version": "0.8.18-preview",
+          "capabilities": [
+            "custom-commands",
+            "metadata"
+          ],
+          "usage": "azd ai rle <command> [options]",
+          "examples": [
+            {
+              "name": "init",
+              "description": "Select a Gym: OpenEnv sample or, with the harness preview flag, scaffold a Harness: HostedAgent or Harness: BYOH RLE.",
+              "usage": "azd ai rle init [folder-name]"
+            },
+            {
+              "name": "skill install",
+              "description": "Install or update RLE project skills from the RLE samples repository.",
+              "usage": "azd ai rle skill install"
+            },
+            {
+              "name": "publish",
+              "description": "Build, push, and publish the RLE release declared in rle.toml.",
+              "usage": "azd ai rle publish"
+            },
+            {
+              "name": "run",
+              "description": "Build and run the local RLE environment container (Gym: OpenEnv only).",
+              "usage": "azd ai rle run"
+            },
+            {
+              "name": "rollout",
+              "description": "Execute one Loom-backed rollout of a published RLE environment (provisions and tears down the Loom session for you; --model falls back to rle.toml's defaults.model.name).",
+              "usage": "azd ai rle rollout [environment-name] [--version <major.minor.patch>] [--model <loom-base-model>] --task <json>"
+            },
+            {
+              "name": "list",
+              "description": "List RLE environments in a Foundry project.",
+              "usage": "azd ai rle list"
+            },
+            {
+              "name": "show",
+              "description": "Show the details and version history for an RLE environment.",
+              "usage": "azd ai rle show [environment-name]"
+            }
+          ],
+          "artifacts": {
+            "darwin/amd64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "40a2fac117adadf9e0bb431c0e5d2d779c5906908d30752f797048d9828af88a"
+              },
+              "entryPoint": "azure-ai-rle-darwin-amd64",
+              "url": "C:\\Users\\swatisinghvi\\Code\\azure-dev\\cli\\azd\\extensions\\azure.ai.rle\\artifacts\\rle-dev\\0.8.18-preview\\azure-ai-rle-darwin-amd64.zip"
+            },
+            "darwin/arm64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "b3e13dbad7677cbb7e79a62d16b2dd6dc129d585e0a5fe434a30d73c224950e4"
+              },
+              "entryPoint": "azure-ai-rle-darwin-arm64",
+              "url": "C:\\Users\\swatisinghvi\\Code\\azure-dev\\cli\\azd\\extensions\\azure.ai.rle\\artifacts\\rle-dev\\0.8.18-preview\\azure-ai-rle-darwin-arm64.zip"
+            },
+            "linux/amd64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "7d6a9ca7669684c81479223e8288a4e0fc8dfd6b4ae5fc82f39d4f6bb6328983"
+              },
+              "entryPoint": "azure-ai-rle-linux-amd64",
+              "url": "C:\\Users\\swatisinghvi\\Code\\azure-dev\\cli\\azd\\extensions\\azure.ai.rle\\artifacts\\rle-dev\\0.8.18-preview\\azure-ai-rle-linux-amd64.tar.gz"
+            },
+            "linux/arm64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "dd159d69df21db89df4965888c7cbdeb62c9843e1c95f564f434bf4b3cbf0e79"
+              },
+              "entryPoint": "azure-ai-rle-linux-arm64",
+              "url": "C:\\Users\\swatisinghvi\\Code\\azure-dev\\cli\\azd\\extensions\\azure.ai.rle\\artifacts\\rle-dev\\0.8.18-preview\\azure-ai-rle-linux-arm64.tar.gz"
+            },
+            "windows/amd64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "45a41b604948e495b088e43a0f1fd68815983da210fad4a62c4618726dbb5ba4"
+              },
+              "entryPoint": "azure-ai-rle-windows-amd64.exe",
+              "url": "C:\\Users\\swatisinghvi\\Code\\azure-dev\\cli\\azd\\extensions\\azure.ai.rle\\artifacts\\rle-dev\\0.8.18-preview\\azure-ai-rle-windows-amd64.zip"
+            },
+            "windows/arm64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "4f13beb5cd57246e3107f840ce994e590b7153a7645fec0ecaeb629f942f75e5"
+              },
+              "entryPoint": "azure-ai-rle-windows-arm64.exe",
+              "url": "C:\\Users\\swatisinghvi\\Code\\azure-dev\\cli\\azd\\extensions\\azure.ai.rle\\artifacts\\rle-dev\\0.8.18-preview\\azure-ai-rle-windows-arm64.zip"
+            }
+          }
         }
       ],
       "tags": [
