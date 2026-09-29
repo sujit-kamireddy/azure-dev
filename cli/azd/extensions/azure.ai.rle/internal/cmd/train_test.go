@@ -299,7 +299,7 @@ func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
 			}
 			return &http.Response{
 				StatusCode: http.StatusCreated,
-				Body:       io.NopCloser(strings.NewReader(`{"id":"file-training"}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"file-training","status":"processed"}`)),
 				Header:     make(http.Header),
 			}, nil
 		case finetuneJobsPath:
@@ -509,7 +509,7 @@ func stubbedTrain(t *testing.T, ctx context.Context, flags *rleTrainFlags) (*tra
 				return nil, err
 			}
 		}
-		body := `{"id":"file-training"}`
+		body := `{"id":"file-training","status":"processed"}`
 		if request.URL.Path == finetuneJobsPath {
 			body = `{"id":"ftjob-1","status":"queued"}`
 		}

@@ -405,6 +405,19 @@ func (a *trainAction) uploadInputFile(client *finetuneClient, filePath string, f
 	if _, err := fmt.Fprintf(a.cmd.OutOrStdout(), "Uploaded %s file as %s.\n", fileType, uploadedFile.Id); err != nil {
 		return "", err
 	}
+	if strings.ToLower(strings.TrimSpace(uploadedFile.Status)) != "processed" {
+		if _, err := fmt.Fprintf(a.cmd.OutOrStdout(), "Waiting for the %s file import to finish processing ...\n", fileType); err != nil {
+			return "", err
+		}
+	}
+	if err := client.waitForFileProcessed(
+		a.cmd.Context(),
+		uploadedFile,
+		finetuneFileImportTimeout,
+		finetuneFileImportInitialPollInterval,
+	); err != nil {
+		return "", finetuneUploadServiceError(err)
+	}
 	return uploadedFile.Id, nil
 }
 
