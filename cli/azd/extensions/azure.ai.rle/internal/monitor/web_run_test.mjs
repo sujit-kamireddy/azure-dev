@@ -85,6 +85,55 @@ test("a chart with a declared range keeps it instead of fitting to the data", ()
   assert.equal(geometry.series[0].coordinates[0].y, 80);
 });
 
+// The complaint this answers: a run that climbs inside a band spends most of an
+// anchored panel drawing the empty space underneath it, and the movement the
+// panel exists to show is squeezed into what is left.
+test("a focused axis fits the readings and keeps them clear of the frame", () => {
+  const [chart] = runCharts([
+    { step: 0, "env/all/reward/total": 0.52 },
+    { step: 1, "env/all/reward/total": 0.77 },
+  ], [rewardChart]);
+  const anchored = chartGeometry(chart, 400, 160);
+  const focused = chartGeometry(chart, 400, 160, true);
+
+  assert.equal(anchored.minValue, 0, "the anchored reading is unchanged by the option");
+  assert.ok(focused.minValue > 0.49 && focused.minValue < 0.52, `low: ${focused.minValue}`);
+  assert.ok(focused.maxValue > 0.77 && focused.maxValue < 0.8, `high: ${focused.maxValue}`);
+
+  // The same 0.25 of movement, as a share of the height it is drawn in.
+  const travel = ({ series, height }) => Math.abs(series[0].coordinates[0].y
+    - series[0].coordinates[1].y) / height;
+  assert.ok(travel(anchored) < 0.35, `anchored travel: ${travel(anchored)}`);
+  assert.ok(travel(focused) > 0.8, `focused travel: ${travel(focused)}`);
+});
+
+// Focus buys resolution, not a licence to draw a fraction above its ceiling.
+test("a declared range bounds a focused window instead of dictating it", () => {
+  const success = RUN_CHARTS.find((chart) => chart.id === "success");
+  const [chart] = runCharts([
+    { step: 0, "env/all/rle_harness/task_success": 0.95 },
+    { step: 1, "env/all/rle_harness/task_success": 1 },
+  ], [success]);
+  const geometry = chartGeometry(chart, 400, 160, true);
+
+  assert.ok(geometry.minValue > 0.94 && geometry.minValue < 0.95, `low: ${geometry.minValue}`);
+  assert.equal(geometry.maxValue, 1, "clearance cannot push the axis past a declared ceiling");
+  assert.deepEqual(
+    [chartGeometry(chart, 400, 160).minValue, chartGeometry(chart, 400, 160).maxValue], [0, 1]);
+});
+
+test("a run that has not moved is a flat line on a focused axis too", () => {
+  const [chart] = runCharts([
+    { step: 0, "env/all/reward/total": 0.4 },
+    { step: 1, "env/all/reward/total": 0.4 },
+  ], [rewardChart]);
+  const geometry = chartGeometry(chart, 400, 160, true);
+  const [first, second] = geometry.series[0].coordinates;
+
+  assert.ok(geometry.minValue < 0.4 && geometry.maxValue > 0.4);
+  assert.ok(Number.isFinite(first.y) && first.y === second.y);
+});
+
 test("a run that has not moved is a flat line rather than a division by zero", () => {
   const [chart] = runCharts([
     { step: 0, "env/all/reward/total": 0.4 },

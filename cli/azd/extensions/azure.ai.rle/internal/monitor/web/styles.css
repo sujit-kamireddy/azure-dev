@@ -442,6 +442,10 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 .fact-group .field-list { grid-template-columns: minmax(90px, 1fr) minmax(0, 1fr); gap: 7px 14px; margin: 0; }
 .fact-group dd { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .run-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 20px; }
+.run-charts-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.run-charts-controls + .run-charts { margin-top: 10px; }
+#chart-focus-toggle { min-width: 96px; padding: 5px 11px; font-size: 13px; }
+#chart-focus-toggle[aria-pressed="true"] { border-color: var(--accent); }
 @media (max-width: 760px) { .run-charts { grid-template-columns: minmax(0, 1fr); } }
 .run-chart { position: relative; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; background: #fcfdff; min-width: 0; }
 .run-chart h3 { font-size: 14px; font-weight: 650; }

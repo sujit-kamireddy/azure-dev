@@ -857,31 +857,60 @@ function axisTicks(min, max, target, wholeNumbers = false) {
   return ticks;
 }
 
+// The share of a focused window given to clearance above and below the
+// readings, so the highest and lowest points are not drawn on the frame.
+const FOCUS_PADDING = 0.08;
+
+// The window the value axis covers.
+//
+// Anchored is the conservative reading. A declared range is kept whole, because
+// 0.75 drawn full height looks like success rather than three quarters, and a
+// positive-only series is measured from zero so the height of a line means
+// something on its own.
+//
+// Focused gives that up for resolution. A run that moves between 0.52 and 0.77
+// spends two thirds of an anchored panel drawing the empty space underneath it,
+// which is where the movement the panel exists to show gets lost. The value
+// axis is labelled either way, so the window is read off the ticks rather than
+// assumed. A declared range still bounds a focused window: a fraction never
+// gets an axis above 1, however close to the ceiling its readings sit.
+function valueWindow(values, range, focus) {
+  let minValue = Math.min(...values);
+  let maxValue = Math.max(...values);
+  if (!focus && range) return [range[0], range[1]];
+  // A run that has not moved yet is still a run. Padding a flat series keeps
+  // it a line across the middle instead of a divide-by-zero.
+  if (minValue === maxValue) {
+    const padding = Math.abs(minValue) > 0 ? Math.abs(minValue) * 0.1 : 1;
+    minValue -= padding;
+    maxValue += padding;
+  } else if (focus) {
+    const padding = (maxValue - minValue) * FOCUS_PADDING;
+    minValue -= padding;
+    maxValue += padding;
+  }
+  if (!focus) return [minValue > 0 ? 0 : minValue, maxValue];
+  if (!range) return [minValue, maxValue];
+  const bounded = [Math.max(range[0], minValue), Math.min(range[1], maxValue)];
+  // A reading outside its own declared range would invert the bounded window,
+  // so the bound is only taken when it leaves an axis that can still be drawn.
+  return bounded[0] < bounded[1] ? bounded : [minValue, maxValue];
+}
+
 // chartGeometry places a panel's points in a fixed 400x160 viewBox.
 //
 // Held separately from the drawing so the arithmetic that decides whether a
 // collapse is visible can be tested without a DOM. A single step is drawn at
 // the left edge rather than the middle: a run with one step should look like a
 // run that has just started, not one centred and finished.
-export function chartGeometry(chart, width = 400, height = 160) {
+export function chartGeometry(chart, width = 400, height = 160, focus = false) {
   const points = chart.series.flatMap((entry) => entry.points);
   if (!points.length) return null;
   const steps = points.map((point) => point.step);
   const minStep = Math.min(...steps);
   const maxStep = Math.max(...steps);
   const values = points.map((point) => point.value);
-  let minValue = chart.range ? chart.range[0] : Math.min(...values);
-  let maxValue = chart.range ? chart.range[1] : Math.max(...values);
-  if (!chart.range) {
-    // A run that has not moved yet is still a run. Padding a flat series keeps
-    // it a line across the middle instead of a divide-by-zero.
-    if (minValue === maxValue) {
-      const padding = Math.abs(minValue) > 0 ? Math.abs(minValue) * 0.1 : 1;
-      minValue -= padding;
-      maxValue += padding;
-    }
-    if (minValue > 0) minValue = 0;
-  }
+  const [minValue, maxValue] = valueWindow(values, chart.range, focus);
   const spanX = maxStep - minStep;
   const spanY = maxValue - minValue || 1;
   const x = (step) => spanX === 0 ? 0 : (step - minStep) / spanX * width;
@@ -910,7 +939,12 @@ export function chartGeometry(chart, width = 400, height = 160) {
     width, height, minStep, maxStep, minValue, maxValue, independent,
     xTicks: (spanX === 0 ? [minStep] : axisTicks(minStep, maxStep, 4, true))
       .map((step) => ({ value: step, x: x(step) })),
-    yTicks: independent ? [] : axisTicks(minValue, maxValue, 4).map((value) => ({ value, y: y(value) })),
+    // An anchored axis starts at zero or at a declared bound, so a nice stride
+    // lands on it. A focused window is an arbitrary interval, where the stride
+    // ladder rounds up often enough to leave two labels on the whole axis, so
+    // it is asked for one more.
+    yTicks: independent ? [] : axisTicks(minValue, maxValue, focus ? 5 : 4)
+      .map((value) => ({ value, y: y(value) })),
     series: chart.series.map((entry) => {
       const scale = scaleFor(entry);
       return {

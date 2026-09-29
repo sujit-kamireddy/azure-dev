@@ -22,6 +22,10 @@ let tokenData = null;
 let stepPage = 0;
 let callPage = 0;
 const CHART_PAGE_SIZE = 100;
+// Anchored panels are the safer read but spend most of their height on empty
+// space once a run settles into a band, so the run view opens focused and the
+// anchored view stays one click away.
+let chartFocus = true;
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
@@ -34,6 +38,24 @@ applyTheme(window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : 
 byID("theme-toggle").addEventListener("click", () => {
   const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   applyTheme(theme);
+});
+
+function applyChartFocus() {
+  const toggle = byID("chart-focus-toggle");
+  toggle.textContent = chartFocus ? "Focused" : "Anchored";
+  toggle.setAttribute("aria-pressed", String(chartFocus));
+  toggle.title = chartFocus
+    ? "Value axes are fitted to the readings. Switch to anchored to measure every panel from zero"
+      + " or from its declared range."
+    : "Value axes start at zero, or at the range the metric is declared over. Switch to focused to"
+      + " fit them to the readings.";
+}
+
+applyChartFocus();
+byID("chart-focus-toggle").addEventListener("click", () => {
+  chartFocus = !chartFocus;
+  applyChartFocus();
+  renderRunCharts();
 });
 
 function element(tag, text, className) {
@@ -1280,7 +1302,7 @@ function attachChartHover(panel, svg, geometry, markers, crosshair) {
 }
 
 function chartFigure(chart) {
-  const geometry = chartGeometry(chart);
+  const geometry = chartGeometry(chart, 400, 160, chartFocus);
   if (!geometry) return null;
   const panel = element("section", undefined, "run-chart");
   panel.append(element("h3", chart.title));
