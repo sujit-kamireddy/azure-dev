@@ -25,9 +25,11 @@ const (
 
 	// RleSkillsPath is the samples-repository directory holding the project
 	// skills, and the first place they are installed into an initialized
-	// Gym/OpenEnv project so compatible agents can assist with authoring.
-	RleSkillsPath        = ".agents/skills"
-	rleGymSkillDirectory = "rle-gym-openenv"
+	// project so compatible agents can assist with authoring.
+	RleSkillsPath = ".agents/skills"
+	// rleSkillDirectory is the canonical RLE authoring skill's directory name
+	// under RleSkillsPath, used to validate the skills source before install.
+	rleSkillDirectory = "rle"
 
 	// rleSampleCatalogFile is the name of the catalog file, relative to a
 	// directory holding sample directories, that controls which of them are
@@ -510,19 +512,19 @@ func validateRleSkillsSource(sourceDir string) error {
 	} else if !sourceInfo.IsDir() {
 		return fmt.Errorf("RLE project skills source %q is not a directory", sourceDir)
 	}
-	skillFile := filepath.Join(sourceDir, rleGymSkillDirectory, "SKILL.md")
+	skillFile := filepath.Join(sourceDir, rleSkillDirectory, "SKILL.md")
 	skillFileInfo, err := os.Stat(skillFile)
 	if os.IsNotExist(err) {
 		return &azdext.LocalError{
-			Message:    fmt.Sprintf("RLE Gym/OpenEnv authoring skill file %q was not found.", skillFile),
-			Code:       "rle_gym_skill_file_not_found",
+			Message:    fmt.Sprintf("RLE authoring skill file %q was not found.", skillFile),
+			Code:       "rle_skill_file_not_found",
 			Category:   azdext.LocalErrorCategoryInternal,
-			Suggestion: "Ensure the RLE samples repository contains the rle-gym-openenv skill, then retry.",
+			Suggestion: "Ensure the RLE samples repository contains the rle skill, then retry.",
 		}
 	} else if err != nil {
 		return err
 	} else if !skillFileInfo.Mode().IsRegular() {
-		return fmt.Errorf("RLE Gym/OpenEnv authoring skill file %q is not a regular file", skillFile)
+		return fmt.Errorf("RLE authoring skill file %q is not a regular file", skillFile)
 	}
 	return nil
 }

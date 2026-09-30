@@ -28,7 +28,7 @@ func TestSkillInstallCommandInstallsIntoCurrentProject(t *testing.T) {
 	var installDest string
 	installRleSkillsFunc = func(dest string) ([]string, error) {
 		installDest = dest
-		return []string{"rle-gym-openenv", "rle-testing"}, nil
+		return []string{"rle", "rle-testing"}, nil
 	}
 
 	command := newSkillInstallCommand()
@@ -40,7 +40,7 @@ func TestSkillInstallCommandInstallsIntoCurrentProject(t *testing.T) {
 	if installDest != projectRoot {
 		t.Fatalf("expected skills to be installed into the current project, got %q", installDest)
 	}
-	for _, expected := range []string{".agents/skills", "rle-gym-openenv", "rle-testing"} {
+	for _, expected := range []string{".agents/skills", "rle", "rle-testing"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output.String())
 		}

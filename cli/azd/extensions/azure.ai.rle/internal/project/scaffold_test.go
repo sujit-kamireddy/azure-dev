@@ -92,7 +92,7 @@ func TestRleSampleCatalogUsesSparseCheckout(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	skillDir := filepath.Join(sourceRepo, filepath.FromSlash(RleSkillsPath), rleGymSkillDirectory)
+	skillDir := filepath.Join(sourceRepo, filepath.FromSlash(RleSkillsPath), rleSkillDirectory)
 	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0750); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestRleSampleCatalogUsesSparseCheckout(t *testing.T) {
 	}
 	for _, skillsPath := range RleSkillsPaths {
 		if _, err := os.Stat(
-			filepath.Join(sessionDir, filepath.FromSlash(skillsPath), rleGymSkillDirectory, "SKILL.md"),
+			filepath.Join(sessionDir, filepath.FromSlash(skillsPath), rleSkillDirectory, "SKILL.md"),
 		); err != nil {
 			t.Fatalf("expected RLE authoring skill to be copied into %s: %v", skillsPath, err)
 		}
@@ -158,7 +158,7 @@ func TestRleSampleCatalogUsesSparseCheckout(t *testing.T) {
 			filepath.Join(
 				sessionDir,
 				filepath.FromSlash(skillsPath),
-				rleGymSkillDirectory,
+				rleSkillDirectory,
 				"references",
 				"workflow.md",
 			),
@@ -414,7 +414,7 @@ func TestRleSampleCatalogFiltersHiddenSamples(t *testing.T) {
 	if err := os.WriteFile(catalogPath, []byte(catalogContents), 0600); err != nil {
 		t.Fatal(err)
 	}
-	skillDir := filepath.Join(sourceRepo, filepath.FromSlash(RleSkillsPath), rleGymSkillDirectory)
+	skillDir := filepath.Join(sourceRepo, filepath.FromSlash(RleSkillsPath), rleSkillDirectory)
 	if err := os.MkdirAll(skillDir, 0750); err != nil {
 		t.Fatal(err)
 	}
@@ -539,8 +539,8 @@ func TestInstallRleSkillsAddsUpdatesAndPreservesUnrelatedSkills(t *testing.T) {
 	sourceRepo := t.TempDir()
 	runTestGit(t, sourceRepo, "init", "--initial-branch=main")
 	for skillName, content := range map[string]string{
-		rleGymSkillDirectory: "new authoring skill",
-		"rle-testing":        "new testing skill",
+		rleSkillDirectory: "new authoring skill",
+		"rle-testing":     "new testing skill",
 	} {
 		skillDir := filepath.Join(sourceRepo, filepath.FromSlash(RleSkillsPath), skillName)
 		if err := os.MkdirAll(skillDir, 0750); err != nil {
@@ -560,7 +560,7 @@ func TestInstallRleSkillsAddsUpdatesAndPreservesUnrelatedSkills(t *testing.T) {
 	)
 
 	dest := t.TempDir()
-	currentSkillDir := filepath.Join(dest, filepath.FromSlash(RleSkillsPath), rleGymSkillDirectory)
+	currentSkillDir := filepath.Join(dest, filepath.FromSlash(RleSkillsPath), rleSkillDirectory)
 	if err := os.MkdirAll(currentSkillDir, 0750); err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +581,7 @@ func TestInstallRleSkillsAddsUpdatesAndPreservesUnrelatedSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(skillNames, []string{"rle-gym-openenv", "rle-testing"}) {
+	if !slices.Equal(skillNames, []string{"rle", "rle-testing"}) {
 		t.Fatalf("expected sorted installed skill names, got %v", skillNames)
 	}
 	assertFileContent(t, filepath.Join(currentSkillDir, "SKILL.md"), "new authoring skill")
@@ -591,7 +591,7 @@ func TestInstallRleSkillsAddsUpdatesAndPreservesUnrelatedSkills(t *testing.T) {
 	for _, skillsPath := range RleSkillsPaths {
 		assertFileContent(
 			t,
-			filepath.Join(dest, filepath.FromSlash(skillsPath), rleGymSkillDirectory, "SKILL.md"),
+			filepath.Join(dest, filepath.FromSlash(skillsPath), rleSkillDirectory, "SKILL.md"),
 			"new authoring skill",
 		)
 		assertFileContent(
@@ -606,7 +606,7 @@ func TestInstallRleSkillsAddsUpdatesAndPreservesUnrelatedSkills(t *testing.T) {
 func TestInstallRleSkillsRollsBackAllSkillsWhenReplacementFails(t *testing.T) {
 	sourceDir := t.TempDir()
 	dest := t.TempDir()
-	for _, skillName := range []string{rleGymSkillDirectory, "rle-testing"} {
+	for _, skillName := range []string{rleSkillDirectory, "rle-testing"} {
 		sourceSkillDir := filepath.Join(sourceDir, skillName)
 		if err := os.MkdirAll(sourceSkillDir, 0750); err != nil {
 			t.Fatal(err)
@@ -641,7 +641,7 @@ func TestInstallRleSkillsRollsBackAllSkillsWhenReplacementFails(t *testing.T) {
 	if _, err := installRleSkillsFromDirectory(sourceDir, dest); err == nil {
 		t.Fatal("expected injected replacement failure")
 	}
-	for _, skillName := range []string{rleGymSkillDirectory, "rle-testing"} {
+	for _, skillName := range []string{rleSkillDirectory, "rle-testing"} {
 		assertFileContent(
 			t,
 			filepath.Join(dest, filepath.FromSlash(RleSkillsPath), skillName, "SKILL.md"),
@@ -656,7 +656,7 @@ func TestInstallRleSkillsRollsBackEarlierTreesWhenALaterTreeFails(t *testing.T) 
 	}
 	sourceDir := t.TempDir()
 	dest := t.TempDir()
-	for _, skillName := range []string{rleGymSkillDirectory, "rle-testing"} {
+	for _, skillName := range []string{rleSkillDirectory, "rle-testing"} {
 		sourceSkillDir := filepath.Join(sourceDir, skillName)
 		if err := os.MkdirAll(sourceSkillDir, 0750); err != nil {
 			t.Fatal(err)
@@ -698,7 +698,7 @@ func TestInstallRleSkillsRollsBackEarlierTreesWhenALaterTreeFails(t *testing.T) 
 		t.Fatal("expected the injected failure to be reached")
 	}
 	for _, skillsPath := range RleSkillsPaths {
-		for _, skillName := range []string{rleGymSkillDirectory, "rle-testing"} {
+		for _, skillName := range []string{rleSkillDirectory, "rle-testing"} {
 			assertFileContent(
 				t,
 				filepath.Join(dest, filepath.FromSlash(skillsPath), skillName, "SKILL.md"),
