@@ -108,6 +108,28 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 14px; overflow
 .reward-caption { color: #677896; font-size: 12px; margin-top: 3px; }
 .snapshot-provenance { grid-column: 1 / -1; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; border-top: 1px solid #e2e9f4; background: #ffffff85; padding: 9px 22px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .snapshot-provenance #episode-description { font-size: 13px; }
+/* The breakdown spans both columns under the reward it explains, and its
+   groups flow so a seven-dimension grader and a one-line one both read well. */
+.score-panel { grid-column: 1 / -1; padding: 4px 22px 16px; }
+.score-panel .eyebrow { color: #536da8; margin-bottom: 8px; }
+.score-groups { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: flex-start; }
+.score-group { flex: 1 1 260px; min-width: 0; }
+.score-group-title { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.score-row { display: grid; grid-template-columns: minmax(0, 1fr) 88px auto; align-items: center; gap: 10px; padding: 2px 0; font-size: 13px; }
+/* Without a bar the value follows the name directly rather than leaving the
+   bar's column empty, which would read as a missing measurement. */
+.score-row.is-plain { grid-template-columns: minmax(0, 1fr) auto; }
+.score-name { overflow-wrap: anywhere; }
+.score-track { height: 6px; border-radius: 3px; background: #dfe6f2; overflow: hidden; }
+.score-fill { display: block; height: 100%; border-radius: 3px; background: #4a7ae0; }
+/* A zero is a result the grader reached, not a value it failed to report, so
+   it is given just enough width to be seen as a mark rather than a blank. */
+.score-fill.is-zero { width: 3px !important; background: #c2511f; }
+.score-value { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 46px; text-align: right; }
+:where([data-theme="dark"]) .score-panel .eyebrow { color: #9fb4de; }
+:where([data-theme="dark"]) .score-track { background: #2a3856; }
+:where([data-theme="dark"]) .score-fill { background: #7ca0ff; }
+:where([data-theme="dark"]) .score-fill.is-zero { background: #f0a276; }
 .separator { margin: 0 9px; }
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; min-width: 0; }
 .section-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 5px; }
@@ -422,6 +444,14 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 .list-filters select { border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; background: var(--surface); color: inherit; }
 .list-scroll { max-width: 100%; max-height: 620px; overflow: auto; margin-top: 16px; border-top: 1px solid var(--line); }
 .rollout-table th, .rollout-table td { padding: 9px 14px; }
+/* A sortable heading keeps the heading's own type and colour, so the column
+   reads as a column; the caret is the only thing that marks it as a control,
+   and it holds its space at rest so the header does not shift when sorted. */
+.sort-button { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+.sort-button::after { content: "\2191"; font-size: 10px; line-height: 1; opacity: 0; }
+.sort-button:hover::after, .sort-button:focus-visible::after { opacity: 0.45; }
+.sort-button.is-sorted::after { opacity: 1; }
+.sort-button.is-descending::after { content: "\2193"; }
 .link-button { background: none; border: none; padding: 0; font: inherit; font-family: var(--mono, monospace); color: #2c5fd0; cursor: pointer; text-decoration: underline; }
 .link-button:hover { color: #1b3f92; }
 #back-button { background: none; border: none; padding: 0; font: inherit; color: #2c5fd0; cursor: pointer; }
@@ -490,6 +520,25 @@ path.tone-accent { stroke: #8a5cd0; } circle.tone-accent { fill: #8a5cd0; }
 path.tone-positive { stroke: #1d8a63; } circle.tone-positive { fill: #1d8a63; }
 path.tone-negative { stroke: #c2511f; } circle.tone-negative { fill: #c2511f; }
 path.tone-muted { stroke: #6b7280; } circle.tone-muted { fill: #6b7280; }
+/* Discovered series are numbered, not named, so they share one categorical
+   ramp instead of carrying a meaning a colour could stand for. The colour is
+   held in a custom property so each entry is declared once rather than three
+   times across stroke, fill and swatch. */
+.tone-series-0 { --series-tone: #365edb; }
+.tone-series-1 { --series-tone: #c2511f; }
+.tone-series-2 { --series-tone: #1d8a63; }
+.tone-series-3 { --series-tone: #8a5cd0; }
+.tone-series-4 { --series-tone: #b8860b; }
+.tone-series-5 { --series-tone: #0e7490; }
+.tone-series-6 { --series-tone: #be185d; }
+.tone-series-7 { --series-tone: #4d7c0f; }
+.tone-series-8 { --series-tone: #7c3aed; }
+.tone-series-9 { --series-tone: #b45309; }
+.tone-series-10 { --series-tone: #0f766e; }
+.tone-series-11 { --series-tone: #64748b; }
+[class*="tone-series-"] .legend-swatch { background: var(--series-tone); }
+path[class*="tone-series-"] { stroke: var(--series-tone); }
+circle[class*="tone-series-"] { fill: var(--series-tone); }
 /* On its own tab the log is the whole view, so it takes the window rather than
    the 420px it was given as one disclosure among others on the metrics page. */
 .run-log { max-height: 62vh; min-height: 260px; overflow: auto; margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -507,3 +556,17 @@ path.tone-muted { stroke: #6b7280; } circle.tone-muted { fill: #6b7280; }
 :where([data-theme="dark"]) path.tone-positive { stroke: #6fd5b3; } :where([data-theme="dark"]) circle.tone-positive { fill: #6fd5b3; }
 :where([data-theme="dark"]) path.tone-negative { stroke: #f0a276; } :where([data-theme="dark"]) circle.tone-negative { fill: #f0a276; }
 :where([data-theme="dark"]) path.tone-muted { stroke: #9aa5b8; } :where([data-theme="dark"]) circle.tone-muted { fill: #9aa5b8; }
+/* The same ramp lifted for a dark surface. Only the custom property changes,
+   so the stroke, fill and swatch rules above are not repeated. */
+:where([data-theme="dark"]) .tone-series-0 { --series-tone: #7ca0ff; }
+:where([data-theme="dark"]) .tone-series-1 { --series-tone: #f0a276; }
+:where([data-theme="dark"]) .tone-series-2 { --series-tone: #6fd5b3; }
+:where([data-theme="dark"]) .tone-series-3 { --series-tone: #c2a0f2; }
+:where([data-theme="dark"]) .tone-series-4 { --series-tone: #e3c04f; }
+:where([data-theme="dark"]) .tone-series-5 { --series-tone: #5fc7e0; }
+:where([data-theme="dark"]) .tone-series-6 { --series-tone: #f49ac2; }
+:where([data-theme="dark"]) .tone-series-7 { --series-tone: #b6d96a; }
+:where([data-theme="dark"]) .tone-series-8 { --series-tone: #c4a6fb; }
+:where([data-theme="dark"]) .tone-series-9 { --series-tone: #f2b872; }
+:where([data-theme="dark"]) .tone-series-10 { --series-tone: #5fd6c4; }
+:where([data-theme="dark"]) .tone-series-11 { --series-tone: #a8b6c9; }

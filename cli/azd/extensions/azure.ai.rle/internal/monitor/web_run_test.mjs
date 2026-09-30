@@ -4,7 +4,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  chartGeometry, chartPath, exceptionFromTraceback, executionStatus, groupSignal, runCharts, runFacts,
+  breakdownCharts, chartGeometry, chartPath, exceptionFromTraceback, executionStatus, groupSignal,
+  rolloutScores, runCharts, runFacts, sortRollouts,
   runHeadline, runWarnings, settingLabel, smoothSeries, withGroupSignal, RUN_CHARTS,
 } from "./web/data.mjs";
 
@@ -535,4 +536,132 @@ test("smoothing reads values, not row order, and rejects windows that cannot be 
   assert.deepEqual(smoothSeries(points, 3), [{ step: 1, value: 1 }, { step: 2, value: 2 }, { step: 3, value: 3 }]);
   for (const window of [0, 1, -5]) assert.deepEqual(smoothSeries(points, window), []);
   for (const bad of [undefined, null, "points", 5]) assert.deepEqual(smoothSeries(bad, 5), []);
+});
+
+// --- Discovered breakdowns -------------------------------------------------
+
+function breakdownRows(entries) {
+  return entries.map((values, step) => ({ step, ...values }));
+}
+
+test("breakdown charts discover facet members from the run rather than naming them", () => {
+  const rows = breakdownRows([
+    { "rle_harness/validation/dim/materiality": 0.2, "rle_harness/validation/dim/recall": 0.4 },
+    { "rle_harness/validation/dim/materiality": 0.6, "rle_harness/validation/dim/recall": 0.5 },
+  ]);
+  const [chart] = breakdownCharts(rows);
+  assert.equal(chart.id, "breakdown-dimensions");
+  assert.deepEqual(chart.series.map((entry) => entry.name), ["materiality", "recall"]);
+  assert.deepEqual(chart.series.map((entry) => entry.tone), ["series-0", "series-1"]);
+  assert.deepEqual(chart.series[0].points, [{ step: 0, value: 0.2 }, { step: 1, value: 0.6 }]);
+});
+
+test("a facet reported for both training and validation is charted from validation only", () => {
+  const rows = breakdownRows([{
+    "env/all/rle_harness/env/variant/rumor": 0.9,
+    "env/all/rle_harness/env/variant/clean": 0.9,
+    "rle_harness/validation/variant/rumor": 0.1,
+    "rle_harness/validation/variant/clean": 0.2,
+  }]);
+  const [chart] = breakdownCharts(rows);
+  assert.equal(chart.series.length, 2);
+  assert.deepEqual(chart.series.map((entry) => entry.points[0].value), [0.2, 0.1]);
+});
+
+test("a facet with a single member is not charted, because that is the total drawn twice", () => {
+  const rows = breakdownRows([{ "rle_harness/validation/dim/only": 0.5 }]);
+  assert.deepEqual(breakdownCharts(rows), []);
+});
+
+test("capping a breakdown keeps the members that moved least and still lists them alphabetically", () => {
+  const rows = breakdownRows([
+    { "v/dim/a": 0, "v/dim/b": 0, "v/dim/c": 0 },
+    { "v/dim/a": 0.9, "v/dim/b": 0.1, "v/dim/c": 0.2 },
+  ]);
+  const [chart] = breakdownCharts(rows, undefined, 2);
+  assert.deepEqual(chart.series.map((entry) => entry.name), ["b", "c"]);
+  assert.match(chart.note, /Showing 2 of 3, the ones that moved least\./);
+});
+
+test("a breakdown declares a unit range only when every reading is bounded by it", () => {
+  const bounded = breakdownRows([{ "v/dim/a": 0, "v/dim/b": 1 }]);
+  assert.deepEqual(breakdownCharts(bounded)[0].range, [0, 1]);
+  const unbounded = breakdownRows([{ "v/dim/a": 0, "v/dim/b": 7.5 }]);
+  assert.equal(breakdownCharts(unbounded)[0].range, undefined);
+});
+
+test("a deeper namespace is not mistaken for a member of the facet above it", () => {
+  const rows = breakdownRows([{ "v/dim/a/inner": 0.5, "v/dim/b": 0.5, "v/dim/c": 0.5 }]);
+  const [chart] = breakdownCharts(rows);
+  assert.deepEqual(chart.series.map((entry) => entry.name), ["b", "c"]);
+});
+
+test("non-numeric and absent readings never become points", () => {
+  const rows = [
+    { step: 0, "v/dim/a": 0.5, "v/dim/b": null },
+    { step: 1, "v/dim/a": "0.6", "v/dim/b": 0.4 },
+    { step: 2, "v/dim/a": 0.7, "v/dim/b": 0.3 },
+  ];
+  const [chart] = breakdownCharts(rows);
+  const points = Object.fromEntries(chart.series.map((entry) => [entry.name, entry.points.length]));
+  assert.deepEqual(points, { a: 2, b: 2 });
+});
+
+// --- One rollout's grading -------------------------------------------------
+
+test("a rollout's scores are grouped by facet and ordered worst first", () => {
+  const groups = rolloutScores({
+    "dim/proportionality": 1, "dim/materiality": 0, "dim/calibration": 0.6,
+    "variant/rumor": 0.09, format: 1, n_tool_calls: 5,
+  });
+  assert.deepEqual(groups.map((group) => group.title),
+    ["Reward dimensions", "Task variant", "Other metrics"]);
+  assert.deepEqual(groups[0].entries, [
+    { name: "materiality", value: 0 },
+    { name: "calibration", value: 0.6 },
+    { name: "proportionality", value: 1 },
+  ]);
+  // What no facet claimed keeps the order the environment reported it in,
+  // because a count and a fraction have no ranking in common.
+  assert.deepEqual(groups[2].entries, [{ name: "format", value: 1 }, { name: "n_tool_calls", value: 5 }]);
+  assert.equal(groups[2].plain, true);
+});
+
+test("rollout scores ignore anything that is not a finite number", () => {
+  const groups = rolloutScores({
+    "dim/a": 0.5, "dim/b": "0.5", "dim/c": null, "dim/d": Infinity, note: "ignored",
+  });
+  assert.deepEqual(groups, [{ id: "dimensions", title: "Reward dimensions", entries: [{ name: "a", value: 0.5 }] }]);
+});
+
+test("a rollout with no metrics has nothing to break down", () => {
+  for (const value of [undefined, null, {}, "metrics", []]) assert.deepEqual(rolloutScores(value), []);
+});
+
+// --- Rollout ordering ------------------------------------------------------
+
+test("rollouts sort by a numeric column in both directions and fall back to arrival order", () => {
+  const entries = [
+    { sequence: 1, reward: 0.5 }, { sequence: 2, reward: 0.1 },
+    { sequence: 3, reward: 0.5 }, { sequence: 4, reward: 0.9 },
+  ];
+  assert.deepEqual(sortRollouts(entries, "reward", 1).map((entry) => entry.sequence), [2, 1, 3, 4]);
+  assert.deepEqual(sortRollouts(entries, "reward", -1).map((entry) => entry.sequence), [4, 1, 3, 2]);
+});
+
+test("a rollout with no reward settles at the bottom whichever way the column is sorted", () => {
+  const entries = [
+    { sequence: 1 }, { sequence: 2, reward: 0.1 }, { sequence: 3, reward: null }, { sequence: 4, reward: 0.9 },
+  ];
+  for (const direction of [1, -1]) {
+    const order = sortRollouts(entries, "reward", direction).map((entry) => entry.sequence);
+    assert.deepEqual(order.slice(2), [1, 3], `unrewarded rollouts sink when direction is ${direction}`);
+  }
+});
+
+test("sorting never mutates the list it was given", () => {
+  const entries = [{ sequence: 2, reward: 0.9 }, { sequence: 1, reward: 0.1 }];
+  const before = JSON.stringify(entries);
+  sortRollouts(entries, "reward", 1);
+  assert.equal(JSON.stringify(entries), before);
 });
