@@ -280,7 +280,8 @@ azd ai rle init
 The Gym: OpenEnv path reads the available environments from
 [rle-samples](https://github.com/sujit-kamireddy/rle-samples). It downloads
 only the selected sample, including its manifest, plus all project skills,
-including the canonical `rle-gym-openenv` authoring skill.
+including the canonical `rle` authoring skill, which covers Gym/OpenEnv and
+Harness (BYOH and HostedAgent) environments alike.
 The skills are installed twice, into `.agents/skills` and `.claude/skills`,
 because no single directory reaches every agent: Claude Code discovers project
 skills only under `.claude/skills`, OpenAI Codex only under `.agents/skills`,
