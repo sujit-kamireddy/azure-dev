@@ -134,6 +134,18 @@ func finetuneServiceError(err error) error {
 	return result
 }
 
+func finetuneMonitorServiceError(err error) error {
+	result := finetuneServiceError(err)
+	serviceErr, ok := errors.AsType[*azdext.ServiceError](result)
+	if !ok || serviceErr.StatusCode != http.StatusNotFound {
+		return result
+	}
+
+	serviceErr.Suggestion = "Confirm the job is present with `azd ai rle jobs`. This fine-tuning endpoint does not " +
+		"expose rollout records for job monitoring; use an endpoint that supports rollout monitoring to view rollouts."
+	return serviceErr
+}
+
 func finetuneUploadServiceError(err error) error {
 	result := &azdext.ServiceError{
 		Message:     err.Error(),

@@ -365,6 +365,44 @@ func TestMonitorEndpointRedactsCredentials(t *testing.T) {
 	}
 }
 
+func TestMonitorJobNotFoundExplainsUnsupportedRolloutRecords(t *testing.T) {
+	originalCreateClient, originalMonitor := createFinetuneClient, runJobMonitor
+	t.Cleanup(func() {
+		createFinetuneClient = originalCreateClient
+		runJobMonitor = originalMonitor
+	})
+	createFinetuneClient = func(endpoint string) (*finetuneClient, error) {
+		if endpoint != "https://account.openai.azure.com" {
+			t.Fatalf("unexpected endpoint: %q", endpoint)
+		}
+		return &finetuneClient{}, nil
+	}
+	runJobMonitor = func(
+		context.Context, rollouts.Reader, rollouts.Lister, string, string, bool, io.Writer, io.Writer,
+	) error {
+		return &finetuneHTTPError{statusCode: http.StatusNotFound, body: `{"error":{"code":"404"}}`}
+	}
+
+	command := newMonitorCommand()
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	err := runMonitorForJob(
+		t.Context(), command, "ftjob-missing-rollouts", "https://account.openai.azure.com", "", true,
+	)
+	serviceErr, ok := errors.AsType[*azdext.ServiceError](err)
+	if !ok {
+		t.Fatalf("expected ServiceError, got %T: %v", err, err)
+	}
+	if serviceErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 status, got %d", serviceErr.StatusCode)
+	}
+	for _, want := range []string{"azd ai rle jobs", "does not expose rollout records"} {
+		if !strings.Contains(serviceErr.Suggestion, want) {
+			t.Fatalf("missing %q in suggestion: %q", want, serviceErr.Suggestion)
+		}
+	}
+}
+
 func TestMonitorAlwaysVisibleAndEnabled(t *testing.T) {
 	for _, development := range []string{"", "false", "true"} {
 		t.Run(development, func(t *testing.T) {

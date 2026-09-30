@@ -162,15 +162,18 @@ func runMonitorForJob(
 	if err != nil {
 		return err
 	}
-	client, err := newFinetuneClient(finetuneEndpoint)
+	client, err := createFinetuneClient(finetuneEndpoint)
 	if err != nil {
 		return err
 	}
 	source := &jobRollouts{client: client, jobID: jobID}
-	return runJobMonitor(
+	if err := runJobMonitor(
 		ctx, source, source, jobID, resolveMonitorRunDir(logsRoot, jobID), noBrowser,
 		cmd.OutOrStdout(), cmd.ErrOrStderr(),
-	)
+	); err != nil {
+		return finetuneMonitorServiceError(err)
+	}
+	return nil
 }
 
 // resolveMonitorRunDir finds the local mirror of a job, if one was made.
