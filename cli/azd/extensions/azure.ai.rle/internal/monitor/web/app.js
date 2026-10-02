@@ -189,10 +189,6 @@ function selectTab(name, focus = false) {
     if (name === "metrics" && runOverview) renderRunView();
     if (name === "rollouts" && rolloutIndex) renderRolloutList();
     if (name === "logs") void refreshRunLog();
-    if (realService() && name === "metrics") {
-      byID("rollout-list").hidden = false;
-      renderRolloutList();
-    }
   }
 }
 

@@ -223,7 +223,12 @@ func runRealJobMonitor(
 	if err != nil {
 		return err
 	}
-	source := &rleJobSource{rle: rle, ft: client, jobID: jobID, project: project}
+	// The monitor polls several endpoints at once, so both clients share one token cache.
+	credential := newCachedTokenCredential(rle.credential)
+	rle.credential = credential
+	monitorFT := *client
+	monitorFT.credential = credential
+	source := &rleJobSource{rle: rle, ft: &monitorFT, jobID: jobID, project: project}
 	return runAPIJobMonitor(ctx, source, jobID, noBrowser, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
