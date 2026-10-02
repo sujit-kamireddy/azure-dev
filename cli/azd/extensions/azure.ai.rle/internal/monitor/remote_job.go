@@ -29,7 +29,7 @@ const (
 	// does not replay updates, and its creation-order listing can briefly hide
 	// concurrent writes behind the anchor, so a full list periodically
 	// reconciles both.
-	rolloutDiscoverEvery  = 15 * time.Second
+	rolloutDiscoverEvery  = time.Minute
 	rolloutRunningEvery   = time.Minute
 	rolloutReconcileEvery = 5 * time.Minute
 	runningPerRefresh     = 50
@@ -260,7 +260,7 @@ func (j *remoteJob) refresh(ctx context.Context, now time.Time, force bool) {
 		})
 	}
 	reads.Go(func() {
-		j.poll(ctx, now, "metrics", 5*time.Second, func() error { return j.readMetrics(ctx, now) })
+		j.poll(ctx, now, "metrics", 10*time.Second, func() error { return j.readMetrics(ctx, now) })
 	})
 	reads.Go(func() {
 		j.poll(ctx, now, "rollouts", rolloutDiscoverEvery, func() error { return j.readRollouts(ctx, now) })
@@ -269,7 +269,7 @@ func (j *remoteJob) refresh(ctx context.Context, now time.Time, force bool) {
 	})
 	if !terminal {
 		reads.Go(func() {
-			j.poll(ctx, now, "status", 15*time.Second, func() error {
+			j.poll(ctx, now, "status", time.Minute, func() error {
 				status, err := j.source.Status(ctx)
 				if err != nil {
 					return err

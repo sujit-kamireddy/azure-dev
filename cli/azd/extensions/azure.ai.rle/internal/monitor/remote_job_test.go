@@ -179,12 +179,15 @@ func TestRemoteMonitorRegistrationAndSchedule(t *testing.T) {
 	}
 	reader.configErr = nil
 	j.refresh(t.Context(), now.Add(5*time.Second), false)
-	if reader.configCalls != 2 || reader.metricCalls != 2 || reader.statusCalls != 1 {
+	if reader.configCalls != 2 || reader.metricCalls != 1 || reader.statusCalls != 1 {
 		t.Fatalf("unexpected cadence: %+v", reader)
 	}
 	j.refresh(t.Context(), now.Add(10*time.Second), false)
-	j.refresh(t.Context(), now.Add(15*time.Second), false)
-	if reader.configCalls != 2 || reader.statusCalls != 2 || reader.detailCalls != 0 {
+	if reader.metricCalls != 2 || reader.listCalls != 1 || reader.statusCalls != 1 {
+		t.Fatalf("unexpected cadence: %+v", reader)
+	}
+	j.refresh(t.Context(), now.Add(time.Minute), false)
+	if reader.configCalls != 2 || reader.statusCalls != 2 || reader.listCalls != 2 || reader.detailCalls != 1 {
 		t.Fatalf("unexpected cadence: %+v", reader)
 	}
 }

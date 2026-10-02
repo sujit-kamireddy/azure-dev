@@ -653,12 +653,12 @@ Polling is shared across browser tabs:
 | Data | Interval |
 | --- | --- |
 | Config | 5 seconds until registered, then cached |
-| New metrics (incremental) | 5 seconds |
-| New rollout summaries, listed after the last one seen | 15 seconds |
+| New metrics (incremental) | 10 seconds |
+| New rollout summaries, listed after the last one seen | 1 minute |
 | Running rollouts, point-read for status and results (newest 50) | 1 minute |
 | Full rollout list reconciliation, and once after the job settles | 5 minutes |
 | Metric reread, for late rows | 60 seconds |
-| Fine-tuning job status | 15 seconds until terminal |
+| Fine-tuning job status | 1 minute until terminal |
 | Full rollout result | On click only |
 
 Rereads cover only the retained window and run in bounded page batches. Service
