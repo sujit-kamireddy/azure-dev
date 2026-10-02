@@ -16,6 +16,10 @@ import (
 // Set it when an environment routes RLE jobs to a facade or mock service.
 const rleTrainEndpointEnvVar = "RLE_TRAIN_ENDPOINT"
 
+func usesRealFinetuning(flagValue string) bool {
+	return strings.TrimSpace(flagValue) == "" && strings.TrimSpace(os.Getenv(rleTrainEndpointEnvVar)) == ""
+}
+
 // resolveFinetuneEndpoint picks the fine-tuning API the RLE commands talk to:
 // the --endpoint flag, then RLE_TRAIN_ENDPOINT, else the endpoint derived from
 // the Foundry project. All three RLE commands share it so that a job submitted

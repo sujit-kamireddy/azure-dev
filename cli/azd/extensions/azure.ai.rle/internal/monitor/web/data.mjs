@@ -432,6 +432,12 @@ export async function fetchSnapshot(fetcher = fetch, rolloutID = "") {
     throw new Error("Could not reach the local monitor. Check that the monitor command is still running, then try again.");
   }
   if (!result.ok) {
+    let detail;
+    try {
+      const body = await result.json();
+      if (typeof body?.error === "string") detail = body.error;
+    } catch { /* Older local handlers return plain text; keep the HTTP diagnostic. */ }
+    if (detail) throw new Error(`Could not load rollout: ${detail}`);
     throw new Error(`The local monitor returned HTTP ${result.status}. Check the monitor terminal, then try again.`);
   }
   try {
@@ -1098,7 +1104,7 @@ export function runFacts(overview) {  if (!isRecord(overview)) return { identity
       ["Started", meta.started_at],
     ]),
     model: rows([
-      ["Base model", model.model_name],
+      ["Base model", model.model_name ?? config.model_name],
       ["Renderer", model.renderer_name],
       ["Loom session", model.loom_session_id],
       ["Context window", isNumber(model.max_sequence_tokens)
@@ -1156,3 +1162,28 @@ export const fetchRunOverview = (fetcher = fetch) => fetchRun(fetcher, "/api/run
 export const fetchRunMetrics = (fetcher = fetch) => fetchRun(fetcher, "/api/run/metrics");
 export const fetchRunLog = (fetcher = fetch, offset = 0) =>
   fetchRun(fetcher, `/api/run/logs?offset=${encodeURIComponent(String(offset))}`);
+
+// Remote summaries carry status directly; never inspect result bodies for it.
+export function remoteRolloutState(entry) {
+  return ["running", "completed", "failed"].includes(entry?.status) ? entry.status : "unknown";
+}
+
+export function remoteRunNotices(overview) {
+  const notes = [];
+  if (!overview?.run?.config) notes.push("Waiting for job registration; the job ID may not yet exist in this project.");
+  if (overview?.run?.meta?.status) notes.push(`Job status: ${overview.run.meta.status}.`);
+  for (const [name, state] of Object.entries(overview?.states ?? {})) {
+    if (state.error) {
+      notes.push(`${name}: ${state.error}${state.updated_at ? ` Last successful read: ${state.updated_at}.` : ""}`);
+    }
+  }
+  if (overview?.limited) {
+    notes.push("Showing a bounded history window (the latest 5,000 metric rows and 1,000 rollouts), not the full run.");
+  }
+  if (overview?.paused === "completed") {
+    notes.push("Automatic polling paused after completion. Refresh to check for later arrivals.");
+  } else if (overview?.paused) {
+    notes.push("Automatic polling stopped. Refresh to try again.");
+  }
+  return notes;
+}

@@ -560,7 +560,7 @@ monitor without deleting saved artifacts.
 | Option | When to use it |
 | --- | --- |
 | `--output-dir <path>` | Read from an artifact root other than `.output` in the current folder. Pass the parent of the rollout-ID directories, not an individual rollout folder. |
-| `--logs-root <path>` | With `--job-id`, read the run mirror `train --follow` wrote somewhere other than `$LOOM_LOGS_ROOT` or `~/loom-runs`. |
+| `--logs-root <path>` | With facade `--job-id` monitoring, read the run mirror `train --follow` wrote somewhere other than `$LOOM_LOGS_ROOT` or `~/loom-runs`. Not supported for real-service monitoring. |
 | `--no-browser` | On standalone `monitor`, print a link instead of opening the browser. Open the printed link yourself. |
 
 `--no-prompt` does not disable browser launching or stop the monitor.
@@ -620,7 +620,65 @@ The validation file is optional and follows the same local-file upload flow.
 Use `--endpoint` to target a different fine-tuning resource for a single
 invocation.
 
-`--follow` mirrors the run's artifacts to the local disk as they are written and
+### Real-service monitoring (default endpoint)
+
+Without `--endpoint` or `RLE_TRAIN_ENDPOINT`, **train always opens the job
+monitor after submission**, even with redirected output or `--no-prompt`.
+Keep the process running to use the UI; Ctrl+C stops monitoring, not training.
+`--no-browser` prints the URL without opening a browser. `--follow`, `--logs-root`
+and explicit `--output` are rejected on this path rather than silently ignored.
+
+Reopen the same monitor from any machine with project access:
+
+```powershell
+azd ai rle monitor --job-id ftjob-7898670d3ae8453e89e591f9
+```
+
+Both commands read the same project-scoped RLE APIs, with no local run mirror.
+The Summary shows registered config, available metric charts, and lightweight
+rollout summaries. Full rollout results/graphs are fetched **only on click**.
+An unregistered job shows a waiting state; unavailable/expired results leave
+metadata visible. The producer must register the same job ID, publish complete
+metric rows with a nonnegative integer `step` (`step_id` alone is not sufficient),
+and associate rollouts with the job and a nonnegative `sequence_id`.
+
+The CLI caches data in memory: the latest 5,000 metric rows (up to 32 MiB) and the
+latest 1,000 rollout summaries. The UI identifies truncated history. Restarting reloads persisted
+data. No training config, metric, graph, or log mirror files are created.
+Credentials remain in the CLI process.
+
+Polling is shared across browser tabs:
+
+| Data | Interval |
+| --- | --- |
+| Config | 5 seconds until registered, then cached |
+| New metrics and rollout summaries (incremental) | 5 seconds |
+| Rollout summary reread, for status changes and late rows | 15 seconds |
+| Metric reread, for late rows | 60 seconds |
+| Fine-tuning job status | 15 seconds until terminal |
+| Full rollout result | On click only |
+
+Rereads cover only the retained window and run in bounded page batches. Service
+errors back off and respect `Retry-After`; existing data remains visible with an
+error/freshness notice. `FeatureDisabled` stops automatic polling. After terminal job status, polling pauses once a 60-second settling
+period and final reconciliation have completed successfully. **Refresh service
+data** checks for later arrivals without downloading any graphs.
+
+The current API has no training logs, rollout split, training-step mapping, or
+task ID. The real-service UI therefore omits logs, split/task columns, and
+task-group-derived charts. Checkpoint filtering is available; exact
+metric-step-to-rollout navigation is not inferred from checkpoint strings.
+Execution status and the grader's task verdict are separate.
+
+The project must expose the RLE persistence APIs and grant RLE read access.
+Submission/status still use the fine-tuning service; registration/config,
+metrics and rollout reads use the Foundry project's RLE service.
+
+### Facade monitoring (endpoint override)
+
+An explicit `--endpoint` or non-empty `RLE_TRAIN_ENDPOINT` preserves the existing
+facade path, even if an explicit endpoint happens to name an OpenAI resource.
+On this path, `--follow` mirrors the run's artifacts to the local disk as they are written and
 waits for the job to finish:
 
 ```powershell

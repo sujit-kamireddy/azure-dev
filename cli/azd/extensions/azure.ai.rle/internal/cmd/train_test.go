@@ -281,6 +281,7 @@ func TestFinetuneClientSendsProjectHeadersAndAuthenticates(t *testing.T) {
 }
 
 func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
+	stubAPIJobMonitor(t)
 	trainingFilePath := filepath.Join(t.TempDir(), "training.jsonl")
 	if err := os.WriteFile(trainingFilePath, []byte("{\"input\":\"example\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -318,7 +319,7 @@ func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
 			}
 			return &http.Response{
 				StatusCode: http.StatusCreated,
-				Body:       io.NopCloser(strings.NewReader(`{"id":"ftjob-1","status":"queued"}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"` + realMonitorJobID + `","status":"queued"}`)),
 				Header:     make(http.Header),
 			}, nil
 		default:
@@ -361,7 +362,7 @@ func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
 	if !strings.Contains(output.String(), "Uploaded training file as file-training.") {
 		t.Fatalf("expected upload progress output, got %q", output.String())
 	}
-	if !strings.Contains(output.String(), "Submitted fine-tuning job ftjob-1") {
+	if !strings.Contains(output.String(), "Submitted fine-tuning job "+realMonitorJobID) {
 		t.Fatalf("expected job output, got %q", output.String())
 	}
 }
@@ -494,6 +495,7 @@ func TestTrainCommandNoLongerRequiresRleFlags(t *testing.T) {
 // creation, and returns the action alongside the buffer it writes to.
 func stubbedTrain(t *testing.T, ctx context.Context, flags *rleTrainFlags) (*trainAction, *bytes.Buffer) {
 	t.Helper()
+	t.Setenv(rleTrainEndpointEnvVar, "https://facade.example.com")
 	trainingFilePath := filepath.Join(t.TempDir(), "training.jsonl")
 	if err := os.WriteFile(trainingFilePath, []byte("{\"input\":\"example\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -511,7 +513,7 @@ func stubbedTrain(t *testing.T, ctx context.Context, flags *rleTrainFlags) (*tra
 		}
 		body := `{"id":"file-training","status":"processed"}`
 		if request.URL.Path == finetuneJobsPath {
-			body = `{"id":"ftjob-1","status":"queued"}`
+			body = `{"id":"` + realMonitorJobID + `","status":"queued"}`
 		}
 		return &http.Response{
 			StatusCode: http.StatusCreated,
@@ -545,7 +547,7 @@ func TestTrainNamesTheMonitorCommandWhenItIsNotFollowing(t *testing.T) {
 	if err := action.Run(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "azd ai rle monitor --job-id ftjob-1") {
+	if !strings.Contains(output.String(), "azd ai rle monitor --job-id "+realMonitorJobID) {
 		t.Fatalf("output = %q, want the command that opens this run's rollouts", output.String())
 	}
 }
@@ -558,7 +560,7 @@ func TestTrainCarriesTheEndpointIntoTheMonitorCommand(t *testing.T) {
 	if err := action.Run(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "--job-id ftjob-1 --endpoint https://account.openai.azure.com") {
+	if !strings.Contains(output.String(), "--job-id "+realMonitorJobID+" --endpoint https://account.openai.azure.com") {
 		t.Fatalf("output = %q, want the endpoint carried into the monitor command", output.String())
 	}
 }
@@ -603,7 +605,7 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 
 	select {
 	case jobID := <-started:
-		if jobID != "ftjob-1" {
+		if jobID != realMonitorJobID {
 			t.Fatalf("dashboard opened %q, want the submitted job", jobID)
 		}
 	case <-time.After(5 * time.Second):
@@ -612,7 +614,7 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 
 	// The dashboard must read the same directory the stream writes, or it would
 	// show a run with no metrics while they are being downloaded beside it.
-	if runDir := <-monitored; runDir != filepath.Join(logsRoot, "rle-harness", "ftjob-1") {
+	if runDir := <-monitored; runDir != filepath.Join(logsRoot, "rle-harness", realMonitorJobID) {
 		t.Fatalf("dashboard read %q, want the run mirror --follow writes", runDir)
 	}
 

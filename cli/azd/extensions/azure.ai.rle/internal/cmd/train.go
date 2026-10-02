@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -60,7 +61,13 @@ training file to the fine-tuning resource before Loom mounts it as the job input
 is currently hidden from finetunesapi's public API surface and only completes for base models
 enabled for Loom-backed RL-environment training. Job creation fails if the base model is not
 enabled, or if the RLE version is not published and ready in the project set by
-FOUNDRY_PROJECT_ENDPOINT.`,
+FOUNDRY_PROJECT_ENDPOINT.
+
+With the default real-service endpoint, train always opens a local monitor after
+submission and stays running until Ctrl+C (including in non-interactive runs).
+The monitor reads RLE APIs into memory; no training files are mirrored locally.
+Ctrl+C stops monitoring, not the remote job. Use --no-browser to open the link
+manually. --follow and --logs-root apply only to endpoint overrides/facades.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return (&trainAction{cmd: cmd, flags: flags}).Run()
@@ -82,12 +89,12 @@ FOUNDRY_PROJECT_ENDPOINT.`,
 	cmd.Flags().IntVar(&flags.maxEpisodeSteps, "max-episode-steps", 0,
 		"Maximum steps the RLE executes per rollout (0 uses the service default).")
 	cmd.Flags().BoolVar(&flags.follow, "follow", false,
-		"Stream the run's logs and metrics locally until the job finishes, in the layout "+
+		"For endpoint overrides only: stream the run's logs and metrics locally until the job finishes, in the layout "+
 			"the Loom dashboard reads, and serve the run's rollouts in a local dashboard.")
 	cmd.Flags().StringVar(&flags.logsRoot, "logs-root", "",
-		"Where --follow writes mirrored runs. Defaults to $LOOM_LOGS_ROOT, else ~/loom-runs.")
+		"Where facade --follow writes mirrored runs. Defaults to $LOOM_LOGS_ROOT, else ~/loom-runs.")
 	cmd.Flags().BoolVar(&flags.noBrowser, "no-browser", false,
-		"With --follow, print the job monitor address without opening a browser.")
+		"Print the job monitor address without opening a browser (also applies to facade --follow).")
 	cmd.Flags().IntVar(&flags.taskCount, "task-count", 0,
 		"Train on only the first N tasks of the training dataset, for a smaller run. "+
 			"Sets the max_train_examples training option (0 uses the whole dataset).")
@@ -233,6 +240,12 @@ func (a *trainAction) Run() error {
 	if err != nil {
 		return err
 	}
+	realService := usesRealFinetuning(a.flags.endpoint)
+	if realService {
+		if err := rejectRealMonitorFlags(a.cmd, "follow", "logs-root", "output"); err != nil {
+			return err
+		}
+	}
 	azureAIProject, err := projectRouteSegment(projectEndpoint)
 	if err != nil {
 		return err
@@ -306,6 +319,17 @@ func (a *trainAction) Run() error {
 		return err
 	}
 
+	if realService {
+		ctx, stop := signal.NotifyContext(a.cmd.Context(), os.Interrupt)
+		defer stop()
+		if err := runRealJobMonitor(ctx, a.cmd, projectEndpoint, client, job.Id, a.flags.noBrowser); err != nil {
+			return fmt.Errorf(
+				"job %s was accepted, but monitoring failed; reopen with azd ai rle monitor --job-id %s: %w",
+				job.Id, job.Id, err,
+			)
+		}
+		return nil
+	}
 	if a.flags.follow {
 		return a.followJob(client, job.Id)
 	}

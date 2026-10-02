@@ -80,6 +80,7 @@ type source struct {
 	reader   rollouts.Reader
 	run      *runArtifacts
 	probe    *stateProbe
+	remote   *remoteJob
 }
 
 func serve(ctx context.Context, src source, noBrowser bool, out, errOut io.Writer) error {
@@ -96,6 +97,18 @@ func serve(ctx context.Context, src source, noBrowser bool, out, errOut io.Write
 	if src.probe != nil {
 		go src.probe.run(ctx)
 	}
+	if src.remote != nil {
+		pollCtx, cancel := context.WithCancel(ctx)
+		stopped := make(chan struct{})
+		go func() {
+			defer close(stopped)
+			src.remote.run(pollCtx)
+		}()
+		defer func() {
+			cancel()
+			<-stopped
+		}()
+	}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	defer func() { _ = server.Close() }()
@@ -108,7 +121,11 @@ func serve(ctx context.Context, src source, noBrowser bool, out, errOut io.Write
 	if src.jobID != "" {
 		// The count is where the list starts, not where it ends: a running job
 		// keeps recording, and the page picks the new ones up as they land.
-		heading = fmt.Sprintf("Job monitor for %s (%d rollouts so far)", src.jobID, src.index.count())
+		if src.index != nil {
+			heading = fmt.Sprintf("Job monitor for %s (%d rollouts so far)", src.jobID, src.index.count())
+		} else {
+			heading = fmt.Sprintf("Job monitor for %s (reading RLE service)", src.jobID)
+		}
 	}
 	if _, err := fmt.Fprintf(out, "%s: %s\nPress Ctrl+C to stop the local monitor.\n", heading, link); err != nil {
 		return err
@@ -153,6 +170,44 @@ func newHandler(src source, host string) (http.Handler, error) {
 		return nil, fmt.Errorf("load monitor assets: %w", err)
 	}
 	mux := http.NewServeMux()
+	if src.remote != nil {
+		registerRemoteRoutes(mux, src.remote)
+	} else {
+		registerLegacyRoutes(mux, src, data)
+	}
+	files := http.FileServerFS(assets)
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			info, err := fs.Stat(assets, r.URL.Path[1:])
+			if err != nil || info.IsDir() {
+				http.NotFound(w, r)
+				return
+			}
+		}
+		// Windows MIME registrations may classify JavaScript as text/plain.
+		switch path.Ext(r.URL.Path) {
+		case ".js", ".mjs":
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		case ".css":
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		}
+		files.ServeHTTP(w, r)
+	})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'none'; script-src 'self'; style-src 'self'; "+
+				"connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+		if ui.ValidateLoopbackRequest(w, r, host) {
+			mux.ServeHTTP(w, r)
+		}
+	}), nil
+}
+
+// registerLegacyRoutes serves rollouts recorded by the facade or saved locally.
+func registerLegacyRoutes(mux *http.ServeMux, src source, data []byte) {
 	// Absent in single-rollout mode; the page treats 404 as "there is no set to browse".
 	//
 	// The run may still be going, so this is answered from the live index rather
@@ -246,34 +301,5 @@ func newHandler(src source, host string) (http.Handler, error) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(encoded)
 	})
-	files := http.FileServerFS(assets)
 	registerRunRoutes(mux, src)
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			info, err := fs.Stat(assets, r.URL.Path[1:])
-			if err != nil || info.IsDir() {
-				http.NotFound(w, r)
-				return
-			}
-		}
-		// Windows MIME registrations may classify JavaScript as text/plain.
-		switch path.Ext(r.URL.Path) {
-		case ".js", ".mjs":
-			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		case ".css":
-			w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		}
-		files.ServeHTTP(w, r)
-	})
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy",
-			"default-src 'none'; script-src 'self'; style-src 'self'; "+
-				"connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
-		if ui.ValidateLoopbackRequest(w, r, host) {
-			mux.ServeHTTP(w, r)
-		}
-	}), nil
 }
