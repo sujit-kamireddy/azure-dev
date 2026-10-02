@@ -2,9 +2,11 @@
 // Licensed under the MIT License.
 
 import {
+  breakdownCharts,
   buildGraph, chartGeometry, chartHoverAt, chartPath, chartScales, fetchRolloutIndex, fetchRolloutStates, fetchRunLog, fetchRunMetrics,
   fetchRunOverview, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
   runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage,
+  rolloutScores, sortRollouts,
   STATE_REQUEST_LIMIT, TOKEN_PAGE_SIZE,
   toolCalls, toolCallSummary, withGroupSignal,
 } from "./data.mjs";
@@ -678,6 +680,42 @@ function renderCallChart() {
   chartPagination("calls-pagination", callPage, turns.length, (page) => { callPage = page; renderCallChart(); });
 }
 
+// A score between zero and one is drawn as well as printed. Seven numbers in a
+// column take seven readings to rank; seven bars rank themselves, which is the
+// whole reason to break a reward out at all. Anything outside that range is a
+// count or a rate on its own scale and is printed alone.
+function scoreRow(entry, drawBar) {
+  const row = element("div", undefined, `score-row${drawBar ? "" : " is-plain"}`);
+  row.append(element("span", entry.name, "score-name"));
+  if (drawBar) {
+    const track = element("span", undefined, "score-track");
+    const fill = element("span", undefined, "score-fill");
+    fill.style.width = `${entry.value * 100}%`;
+    // Zero is a finding, not an absence, so it keeps a visible stub.
+    if (entry.value === 0) fill.classList.add("is-zero");
+    track.append(fill);
+    row.append(track);
+  }
+  row.append(element("span", formatMetric(entry.value), "score-value"));
+  return row;
+}
+
+function renderScores() {
+  const panel = byID("score-panel");
+  const container = byID("score-groups");
+  container.replaceChildren();
+  const groups = rolloutScores(model.response?.result?.metrics);
+  panel.hidden = groups.length === 0;
+  if (panel.hidden) return;
+  for (const group of groups) {
+    const section = element("section", undefined, "score-group");
+    section.append(element("p", group.title, "score-group-title"));
+    const unit = group.entries.every((entry) => entry.value >= 0 && entry.value <= 1);
+    for (const entry of group.entries) section.append(scoreRow(entry, !group.plain && unit));
+    container.append(section);
+  }
+}
+
 function renderDetails() {
   const container = byID("capture-details");
   container.replaceChildren();
@@ -766,6 +804,7 @@ export function setSnapshot(snapshot) {
   metric("Model calls", model.turns?.length);
   metric("Captured sequences", model.graph.sequences?.length);
   renderActivitySummary();
+  renderScores();
   const episodeParts = [];
   if (model.episode.kind) episodeParts.push(model.episode.kind);
   if (model.episode.termination_reason) episodeParts.push(`Termination: ${model.episode.termination_reason}`);
@@ -897,8 +936,34 @@ function applyMonitorTitle(jobID) {
   document.title = jobID ? `Foundry RLE job monitor · ${jobID}` : "Foundry RLE rollout monitor";
 }
 
+// Sequence ascending is the recorded order, so it is the state the table starts
+// in and the one a third click on any column returns to.
+const DEFAULT_SORT = { column: "sequence", direction: 1 };
+let listSort = { ...DEFAULT_SORT };
+
+function applySort(column) {
+  if (listSort.column !== column) listSort = { column, direction: 1 };
+  else if (listSort.direction === 1) listSort = { column, direction: -1 };
+  else listSort = { ...DEFAULT_SORT };
+  renderRolloutList();
+}
+
+function renderSortIndicators() {
+  for (const button of document.querySelectorAll("#list-table .sort-button")) {
+    const active = button.dataset.sort === listSort.column;
+    const ascending = listSort.direction === 1;
+    button.classList.toggle("is-sorted", active);
+    button.classList.toggle("is-descending", active && !ascending);
+    const header = button.closest("th");
+    if (header) header.setAttribute("aria-sort", active ? (ascending ? "ascending" : "descending") : "none");
+    button.setAttribute("aria-label",
+      `${button.textContent}, ${active ? `sorted ${ascending ? "ascending" : "descending"}, ` : ""}click to sort`);
+  }
+}
+
 function renderRolloutList() {
-  const entries = visibleEntries();
+  const entries = sortRollouts(visibleEntries(), listSort.column, listSort.direction);
+  renderSortIndicators();
   applyMonitorTitle(rolloutIndex.job_id || "");
   byID("list-job-id").textContent = rolloutIndex.job_id || "";
   byID("list-count").textContent = entries.length === rolloutIndex.data.length
@@ -1380,7 +1445,11 @@ function chartFigure(chart) {
 function renderRunCharts() {
   const container = byID("run-charts");
   container.replaceChildren();
-  for (const chart of runCharts(runRows())) {
+  const rows = runRows();
+  // The declared panels answer "is this run working". The discovered ones
+  // answer "what is it working on", which is the question the total cannot
+  // reach, so they follow rather than lead.
+  for (const chart of [...runCharts(rows), ...breakdownCharts(rows)]) {
     const figure = chartFigure(chart);
     if (figure) container.append(figure);
   }
@@ -1516,6 +1585,9 @@ byID("back-button").addEventListener("click", () => {
 });
 byID("list-split").addEventListener("change", renderRolloutList);
 byID("list-step").addEventListener("change", renderRolloutList);
+for (const button of document.querySelectorAll("#list-table .sort-button")) {
+  button.addEventListener("click", () => applySort(button.dataset.sort));
+}
 
 byID("retry").addEventListener("click", load);
 byID("final-response-toggle").addEventListener("click", () => {

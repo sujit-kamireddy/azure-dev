@@ -683,6 +683,220 @@ export function runCharts(rows = [], specs = RUN_CHARTS) {
   return charts;
 }
 
+// The harness carries an environment's own scores through under a facet
+// segment: `dim/<name>` for the components its reward is built from, and
+// `variant/<name>` for the families of task it draws. The facet names are the
+// harness contract; the member names belong to the environment and are its to
+// choose. Naming members here would tie the monitor to one environment, so the
+// members are discovered from the run and only the facets are declared.
+export const BREAKDOWN_FACETS = [
+  {
+    facet: "dim",
+    scoreTitle: "Reward dimensions",
+    id: "dimensions",
+    title: "Reward by dimension",
+    note: "The components the environment's reward is built from, each scored separately. "
+      + "A total can rise while a component the grader weighs heavily never moves, and the "
+      + "total alone cannot show that. A component flat at the top is already solved and is "
+      + "teaching nothing; one flat at the bottom is either unlearnable from these tasks or "
+      + "asking for something the rollouts never supply.",
+  },
+  {
+    facet: "variant",
+    scoreTitle: "Task variant",
+    id: "variants",
+    title: "Reward by task variant",
+    note: "The same reward split by the family of task it was earned on. Families rarely "
+      + "learn at the same rate, and the mean hides that: a run can look healthy while one "
+      + "family sits still or slides backwards. A family that will not move is a question "
+      + "about the tasks or the grader rather than about the model.",
+  },
+];
+
+// An environment may report up to 64 metrics, and 64 lines on one chart is a
+// picture of nothing. Which ones earn the room is not a matter of taste: a
+// series that went nowhere is the finding, and a series that did what everyone
+// expected is the one you can afford to drop.
+export const BREAKDOWN_SERIES_LIMIT = 12;
+
+// Discovered series are numbered rather than named, because there is no
+// meaning to attach a fixed colour to when the members come from the run.
+const BREAKDOWN_TONES = 12;
+
+// Split a metric key at its facet segment. The harness namespaces an
+// environment's metrics when it reports them for a run
+// (`rle_harness/validation/dim/x`), and the environment reports them bare on a
+// rollout (`dim/x`). Both name the same member of the same facet.
+function splitFacet(key, facet) {
+  const prefix = `${facet}/`;
+  const at = key.lastIndexOf(`/${prefix}`);
+  const start = at >= 0 ? at + 1 : key.startsWith(prefix) ? 0 : -1;
+  if (start < 0) return null;
+  const member = key.slice(start + prefix.length);
+  // A member with a slash in it is a deeper namespace, not a leaf of this
+  // facet, and treating it as one would mix two levels together.
+  if (!member || member.includes("/")) return null;
+  return { source: start === 0 ? "" : key.slice(0, start - 1), member };
+}
+
+// Every metric key that sits directly under `/<facet>/`, grouped by the prefix
+// that precedes it. The harness reports each environment metric twice, once for
+// training and once for validation, under different prefixes, so the prefix is
+// what separates the two runs of the same member.
+function facetSources(rows, facet) {
+  const sources = new Map();
+  for (const row of rows) {
+    for (const [key, value] of Object.entries(row)) {
+      if (!isNumber(value)) continue;
+      const found = splitFacet(key, facet);
+      if (!found) continue;
+      if (!sources.has(found.source)) sources.set(found.source, new Map());
+      sources.get(found.source).set(found.member, key);
+    }
+  }
+  return sources;
+}
+
+// Validation is the held-out measurement and re-runs one fixed set of tasks,
+// which is what makes two of its steps comparable at all. Training scores a
+// fresh draw every step, so a per-member training line moves mostly with which
+// tasks were drawn. Charting both would double the lines to weaken the reading.
+function preferredSource(sources) {
+  const names = [...sources.keys()].sort();
+  return names.find((name) => name.includes("validation")) ?? names[0] ?? null;
+}
+
+// How far a member travelled over the run, and how many readings it has.
+function travel(rows, key) {
+  let first = null;
+  let last = null;
+  let readings = 0;
+  for (const row of rows) {
+    const value = row[key];
+    if (!isNumber(value)) continue;
+    if (readings === 0) first = value;
+    last = value;
+    readings += 1;
+  }
+  return { readings, change: readings > 1 ? last - first : 0 };
+}
+
+function breakdownSpec(rows, facet, limit) {
+  const sources = facetSources(rows, facet.facet);
+  const source = preferredSource(sources);
+  if (source === null) return null;
+  const members = [...sources.get(source)]
+    .map(([name, key]) => ({ name, key, ...travel(rows, key) }))
+    .filter((member) => member.readings > 0);
+  // A breakdown of one member is the total drawn twice.
+  if (members.length < 2) return null;
+  // Selection ranks by how little the member moved, so the flat and the
+  // falling survive the cap. Display is alphabetical regardless, because the
+  // view polls while the run is live and a legend that reorders itself under
+  // the reader is harder to use than one that is merely arbitrary.
+  const ranked = [...members].sort((a, b) => a.change - b.change || a.name.localeCompare(b.name));
+  const shown = ranked.slice(0, limit).sort((a, b) => a.name.localeCompare(b.name));
+  const dropped = members.length - shown.length;
+  // A declared range keeps the gaps between members honest: autoscaling a set
+  // of scores that happen to sit between 0.45 and 0.92 turns a real but modest
+  // spread into the whole height of the panel. It is only safe to declare when
+  // the readings are actually bounded, so it is taken from the data.
+  const values = members.flatMap((member) => rows.map((row) => row[member.key]).filter(isNumber));
+  const unit = values.every((value) => value >= 0 && value <= 1);
+  return {
+    id: `breakdown-${facet.id}`,
+    title: facet.title,
+    ...(unit ? { range: [0, 1] } : {}),
+    note: dropped > 0
+      ? `${facet.note} Showing ${shown.length} of ${members.length}, the ones that moved least.`
+      : facet.note,
+    series: shown.map((member, index) => ({
+      key: member.key, name: member.name, tone: `series-${index % BREAKDOWN_TONES}`,
+    })),
+  };
+}
+
+// breakdownCharts draws the facets an environment reported, discovered from the
+// run rather than declared. Panels are built through runCharts so a discovered
+// series behaves exactly like a declared one.
+export function breakdownCharts(rows = [], facets = BREAKDOWN_FACETS, limit = BREAKDOWN_SERIES_LIMIT) {
+  const usable = Array.isArray(rows) ? rows.filter(isRecord) : [];
+  const specs = [];
+  for (const facet of facets) {
+    const spec = breakdownSpec(usable, facet, limit);
+    if (spec) specs.push(spec);
+  }
+  return runCharts(usable, specs);
+}
+
+// rolloutScores groups the metrics a single rollout was graded on.
+//
+// The reward is one number and the grader reached it from several. Which
+// components it zeroed is the whole diagnosis, and a flat JSON object is the
+// one shape that makes seven scores take seven readings to compare.
+//
+// Members are ordered worst first, because a dimension scored zero next to one
+// scored full is the reading worth having, and the ranking of a finished
+// rollout cannot shift under the reader the way a live chart's can.
+export function rolloutScores(metrics, facets = BREAKDOWN_FACETS) {
+  if (!isRecord(metrics)) return [];
+  const groups = [];
+  const claimed = new Set();
+  for (const facet of facets) {
+    const entries = [];
+    for (const [key, value] of Object.entries(metrics)) {
+      if (!isNumber(value)) continue;
+      const found = splitFacet(key, facet.facet);
+      if (!found) continue;
+      claimed.add(key);
+      entries.push({ name: found.member, value });
+    }
+    if (!entries.length) continue;
+    entries.sort((a, b) => a.value - b.value || a.name.localeCompare(b.name));
+    groups.push({ id: facet.id, title: facet.scoreTitle ?? facet.title, entries });
+  }
+  // What is left is the environment's own bookkeeping, and it is not one scale:
+  // a tool-call count and a pass fraction cannot share a bar. It is listed
+  // rather than drawn, and kept in the order the environment reported it.
+  const rest = Object.entries(metrics)
+    .filter(([key, value]) => isNumber(value) && !claimed.has(key))
+    .map(([name, value]) => ({ name, value }));
+  if (rest.length) groups.push({ id: "other", title: "Other metrics", entries: rest, plain: true });
+  return groups;
+}
+
+// sortRollouts orders the rollout list by one numeric column.
+//
+// The list is recorded in the order rollouts arrived, which answers "what is
+// happening now" and never answers "which one went wrong". Ordering by reward
+// is what reduces a run of several thousand rollouts to the handful worth
+// opening.
+//
+// A rollout missing the sorted value has no place on the scale, so it settles
+// at the bottom in either direction rather than passing for a zero, and ties
+// fall back to arrival order so the result is stable while the run is live.
+export function sortRollouts(entries = [], column = "sequence", direction = 1) {
+  const usable = Array.isArray(entries) ? entries.filter(isRecord) : [];
+  return [...usable].sort((a, b) => {
+    const left = a[column];
+    const right = b[column];
+    const leftMissing = !isNumber(left);
+    const rightMissing = !isNumber(right);
+    if (leftMissing || rightMissing) {
+      if (leftMissing && rightMissing) return sequenceOrder(a, b);
+      return leftMissing ? 1 : -1;
+    }
+    if (left === right) return sequenceOrder(a, b);
+    return (left - right) * direction;
+  });
+}
+
+function sequenceOrder(a, b) {
+  const left = isNumber(a.sequence) ? a.sequence : Number.POSITIVE_INFINITY;
+  const right = isNumber(b.sequence) ? b.sequence : Number.POSITIVE_INFINITY;
+  return left - right;
+}
+
 // A centred running mean, drawn only where the whole window exists.
 //
 // A per-step training metric is mostly task-draw noise: each step scores a
