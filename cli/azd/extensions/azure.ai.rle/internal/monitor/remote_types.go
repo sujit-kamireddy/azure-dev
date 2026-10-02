@@ -19,6 +19,7 @@ type JobRollout struct {
 	Sequence        *int64     `json:"sequence_id,omitempty"`
 	EnvironmentName string     `json:"environment_name"`
 	EnvironmentVer  string     `json:"environment_version"`
+	CreatedAt       time.Time  `json:"created_at_utc,omitzero"`
 	Status          string     `json:"status"`
 	Reward          *float64   `json:"reward,omitempty"`
 	Success         *bool      `json:"success,omitempty"`
@@ -36,11 +37,19 @@ type JobPage[T any] struct {
 	Next string `json:"nextContinuationToken"`
 }
 
+// RolloutQuery selects a job's rollouts in creation order. After is a rollout
+// ID; only rollouts after it in server order are listed. CreatedAfter, when
+// set, excludes rollouts created at or before it.
+type RolloutQuery struct {
+	After        string
+	CreatedAfter time.Time
+}
+
 // JobSource reads real-service job data without local artifact files.
 type JobSource interface {
 	Config(context.Context) (json.RawMessage, error)
 	Metrics(context.Context, int64, string) (JobPage[json.RawMessage], error)
-	Rollouts(context.Context, int64, string) (JobPage[JobRollout], error)
+	Rollouts(context.Context, RolloutQuery, string) (JobPage[JobRollout], error)
 	Detail(context.Context, string) (JobRollout, error)
 	Result(context.Context, JobRollout) (rollouts.Snapshot, error)
 	Status(context.Context) (string, error)

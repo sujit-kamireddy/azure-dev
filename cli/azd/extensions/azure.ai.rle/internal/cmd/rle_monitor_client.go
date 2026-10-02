@@ -64,21 +64,31 @@ func (s *rleJobSource) Metrics(
 	return page, err
 }
 
+// Rollouts lists the job's rollouts in creation order. It never sends
+// lastSequence, so rollouts without a sampler sequence_id are included.
 func (s *rleJobSource) Rollouts(
-	ctx context.Context, after int64, token string,
+	ctx context.Context, filter monitor.RolloutQuery, token string,
 ) (monitor.JobPage[monitor.JobRollout], error) {
+	query := url.Values{"limit": {"100"}}
+	if filter.After != "" {
+		query.Set("after", filter.After)
+	}
+	if !filter.CreatedAfter.IsZero() {
+		query.Set("createdAfter", filter.CreatedAfter.UTC().Format(time.RFC3339Nano))
+	}
+	if token != "" {
+		query.Set("continuationToken", token)
+	}
 	var page monitor.JobPage[monitor.JobRollout]
-	err := s.read(ctx, s.jobPath()+"/rollouts"+monitorPageQuery("lastSequence", after, token), &page, 4<<20)
+	err := s.read(ctx, s.jobPath()+"/rollouts?"+query.Encode(), &page, 4<<20)
 	if err != nil {
 		return page, err
 	}
 	if page.Data == nil {
 		return page, errors.New("rollouts response is missing its data array")
 	}
-	// Rows are keyed by ID and ordered by sequence, so reject any that cannot be.
 	for _, entry := range page.Data {
-		if rollouts.ValidateID(entry.RolloutID) != nil || entry.JobID != s.jobID ||
-			entry.Sequence == nil || *entry.Sequence < 0 {
+		if rollouts.ValidateID(entry.RolloutID) != nil || entry.JobID != s.jobID {
 			return page, errors.New("invalid rollout summary for the monitored job")
 		}
 	}

@@ -23,6 +23,16 @@ const (
 	remoteRolloutLimit = 1000
 	remoteMetricBytes  = 32 << 20
 	pagesPerRefresh    = 10
+
+	// New rollouts are discovered after the last one seen, which is usually one
+	// small indexed page. Running rows are refreshed by point reads. The service
+	// does not replay updates, and its creation-order listing can briefly hide
+	// concurrent writes behind the anchor, so a full list periodically
+	// reconciles both.
+	rolloutDiscoverEvery  = 15 * time.Second
+	rolloutRunningEvery   = time.Minute
+	rolloutReconcileEvery = 5 * time.Minute
+	runningPerRefresh     = 50
 )
 
 // Reasons automatic polling stopped, reported to the page as "paused".
@@ -105,23 +115,39 @@ type remoteJob struct {
 	config     json.RawMessage
 	metrics    map[int64]json.RawMessage
 	entries    map[string]JobRollout
+	readAt     map[string]time.Time // When each cached rollout was last read.
 	states     map[string]pollState
 	status     string
 	terminalAt time.Time
 	paused     string
 	limited    bool
 
-	metricCursor  pageCursor
-	rolloutCursor pageCursor
+	metricCursor pageCursor
+	// rolloutAnchor is the last rollout, in server order, of the last finished
+	// scan. rolloutScan is the scan in progress, if a refresh left one
+	// unfinished. rolloutsReconciled is when the last full scan finished.
+	rolloutAnchor      string
+	rolloutScan        *rolloutScan
+	rolloutsReconciled time.Time
+}
+
+// rolloutScan follows one listing query to its last page. The service keeps
+// the query fixed across continuation pages.
+type rolloutScan struct {
+	query RolloutQuery
+	full  bool
+	token string
+	last  string
+	seen  map[string]bool
 }
 
 func newRemoteJob(source JobSource, jobID string) *remoteJob {
 	return &remoteJob{
 		source: source, jobID: jobID,
 		force: make(chan struct{}, 1), resultSlots: make(chan struct{}, 4),
-		metrics: map[int64]json.RawMessage{}, entries: map[string]JobRollout{}, states: map[string]pollState{},
-		metricCursor:  newPageCursor(time.Minute),
-		rolloutCursor: newPageCursor(15 * time.Second), // Rereads the window to refresh rollout status.
+		metrics: map[int64]json.RawMessage{}, entries: map[string]JobRollout{}, readAt: map[string]time.Time{},
+		states:       map[string]pollState{},
+		metricCursor: newPageCursor(time.Minute),
 	}
 }
 
@@ -209,7 +235,7 @@ func (j *remoteJob) refresh(ctx context.Context, now time.Time, force bool) {
 			state.Next = state.RetryAt
 			j.states[key] = state
 		}
-		j.metricCursor.completed, j.rolloutCursor.completed = time.Time{}, time.Time{}
+		j.metricCursor.completed, j.rolloutsReconciled = time.Time{}, time.Time{}
 		if !j.terminalAt.IsZero() {
 			j.terminalAt = now
 		}
@@ -237,7 +263,9 @@ func (j *remoteJob) refresh(ctx context.Context, now time.Time, force bool) {
 		j.poll(ctx, now, "metrics", 5*time.Second, func() error { return j.readMetrics(ctx, now) })
 	})
 	reads.Go(func() {
-		j.poll(ctx, now, "rollouts", 5*time.Second, func() error { return j.readRollouts(ctx, now) })
+		j.poll(ctx, now, "rollouts", rolloutDiscoverEvery, func() error { return j.readRollouts(ctx, now) })
+		// After the list, so rows it just returned are not point-read again.
+		j.poll(ctx, now, "running", rolloutRunningEvery, func() error { return j.refreshRunning(ctx, now) })
 	})
 	if !terminal {
 		reads.Go(func() {
@@ -271,7 +299,7 @@ func (j *remoteJob) refresh(ctx context.Context, now time.Time, force bool) {
 			return
 		}
 	}
-	if !j.metricCursor.completed.Before(settled) && !j.rolloutCursor.completed.Before(settled) {
+	if !j.metricCursor.completed.Before(settled) && !j.rolloutsReconciled.Before(settled) {
 		j.paused = pausedCompleted
 	}
 }
@@ -329,27 +357,145 @@ func (j *remoteJob) trimMetrics() {
 	}
 }
 
+// readRollouts lists rollouts after the anchor, or the whole job when a
+// reconciliation is due. A refresh reads a bounded number of pages and the
+// next one resumes the scan.
 func (j *remoteJob) readRollouts(ctx context.Context, now time.Time) error {
-	p := &j.rolloutCursor
-	p.begin(now)
+	restarted := false
 	for range pagesPerRefresh {
-		page, err := j.source.Rollouts(ctx, p.start, p.token)
+		if j.rolloutScan == nil {
+			j.mu.Lock()
+			j.rolloutScan = j.newRolloutScan(now)
+			j.mu.Unlock()
+		}
+		scan := j.rolloutScan
+		page, err := j.source.Rollouts(ctx, scan.query, scan.token)
+		if serviceErr, ok := errors.AsType[*ReadError](err); ok && serviceErr.Status == http.StatusBadRequest &&
+			!restarted && (scan.query.After != "" || scan.token != "") {
+			// The anchor rollout or a paging token was rejected; scan the job again.
+			j.rolloutAnchor, j.rolloutScan, restarted = "", nil, true
+			continue
+		}
 		if err != nil {
-			p.reset()
+			j.rolloutScan = nil
 			return err
 		}
 		j.mu.Lock()
 		for _, entry := range page.Data {
+			if previous, ok := j.entries[entry.RolloutID]; ok && entry.CreatedAt.IsZero() {
+				entry.CreatedAt = previous.CreatedAt
+			}
 			j.entries[entry.RolloutID] = entry
-			p.maximum = max(p.maximum, *entry.Sequence)
+			j.readAt[entry.RolloutID] = now
 		}
 		j.trimRollouts()
 		j.mu.Unlock()
-		if done, err := p.advance(page.Next, now); done || err != nil {
-			return err
+		if count := len(page.Data); count > 0 {
+			scan.last = page.Data[count-1].RolloutID
 		}
+		if page.Next == "" {
+			// Anchor on the server's last row, never the largest ID; keep the
+			// old anchor when the scan found nothing.
+			if scan.last != "" {
+				j.rolloutAnchor = scan.last
+			}
+			j.rolloutScan = nil
+			if scan.full {
+				j.mu.Lock()
+				j.rolloutsReconciled = now
+				j.mu.Unlock()
+			}
+			return nil
+		}
+		if scan.seen[page.Next] {
+			j.rolloutScan = nil
+			return errors.New("service repeated a continuation token")
+		}
+		scan.seen[page.Next] = true
+		scan.token = page.Next
 	}
 	return nil
+}
+
+// newRolloutScan starts a discovery scan after the anchor, or a full scan when
+// reconciliation is due, including once after a finished job has settled. A
+// full scan of a job beyond the cache bound starts at the oldest retained
+// rollout instead of rereading evicted ones.
+func (j *remoteJob) newRolloutScan(now time.Time) *rolloutScan {
+	scan := &rolloutScan{seen: map[string]bool{}}
+	settled := j.terminalAt.Add(time.Minute)
+	scan.full = j.rolloutAnchor == "" || j.rolloutsReconciled.IsZero() ||
+		now.Sub(j.rolloutsReconciled) >= rolloutReconcileEvery ||
+		(!j.terminalAt.IsZero() && !now.Before(settled) && j.rolloutsReconciled.Before(settled))
+	if !scan.full {
+		scan.query.After = j.rolloutAnchor
+		return scan
+	}
+	if len(j.entries) >= remoteRolloutLimit {
+		if oldest := j.sortedEntries()[0]; !oldest.CreatedAt.IsZero() {
+			scan.query.CreatedAfter = oldest.CreatedAt.Add(-time.Microsecond)
+		}
+	}
+	return scan
+}
+
+func rolloutSettled(status string) bool {
+	switch status {
+	case "", "completed", "failed", "cancelled":
+		return true
+	}
+	return false
+}
+
+// refreshRunning point-reads cached rollouts that are still running and were
+// not read recently, because listing after the anchor never returns their
+// later status or result.
+func (j *remoteJob) refreshRunning(ctx context.Context, now time.Time) error {
+	j.mu.Lock()
+	var ids []string
+	for _, entry := range j.sortedEntries() {
+		if !rolloutSettled(entry.Status) && now.Sub(j.readAt[entry.RolloutID]) >= rolloutRunningEvery/2 {
+			ids = append(ids, entry.RolloutID)
+		}
+	}
+	j.mu.Unlock()
+	// Prefer the newest running rows; older stragglers are caught by reconciliation.
+	ids = ids[max(0, len(ids)-runningPerRefresh):]
+	var (
+		reads    sync.WaitGroup
+		firstErr error
+	)
+	slots := make(chan struct{}, 4)
+	for _, id := range ids {
+		reads.Go(func() {
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			entry, err := j.source.Detail(ctx, id)
+			if err == nil && entry.JobID != j.jobID {
+				err = errors.New("rollout metadata does not belong to the monitored job")
+			}
+			j.mu.Lock()
+			defer j.mu.Unlock()
+			previous, cached := j.entries[id]
+			switch serviceErr, _ := errors.AsType[*ReadError](err); {
+			case serviceErr != nil && serviceErr.Status == http.StatusNotFound:
+				delete(j.entries, id)
+				delete(j.readAt, id)
+			case err != nil:
+				if firstErr == nil {
+					firstErr = err
+				}
+			case cached: // Never resurrect a row the cache bound evicted meanwhile.
+				if entry.CreatedAt.IsZero() {
+					entry.CreatedAt = previous.CreatedAt
+				}
+				j.entries[id] = entry
+				j.readAt[id] = now
+			}
+		})
+	}
+	reads.Wait()
+	return firstErr
 }
 
 func (j *remoteJob) trimRollouts() {
@@ -357,18 +503,17 @@ func (j *remoteJob) trimRollouts() {
 	if excess <= 0 {
 		return
 	}
-	entries := j.sortedEntries()
-	for _, entry := range entries[:excess] {
+	for _, entry := range j.sortedEntries()[:excess] {
 		delete(j.entries, entry.RolloutID)
+		delete(j.readAt, entry.RolloutID)
 	}
 	j.limited = true
-	j.rolloutCursor.floor = *entries[excess].Sequence - 1
 }
 
 func (j *remoteJob) sortedEntries() []JobRollout {
 	entries := append([]JobRollout{}, slices.Collect(maps.Values(j.entries))...)
 	slices.SortFunc(entries, func(a, b JobRollout) int {
-		return cmp.Or(cmp.Compare(*a.Sequence, *b.Sequence), cmp.Compare(a.RolloutID, b.RolloutID))
+		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.RolloutID, b.RolloutID))
 	})
 	return entries
 }

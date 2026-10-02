@@ -915,7 +915,7 @@ function renderRolloutList() {
   body.replaceChildren();
   for (const entry of entries) {
     const row = element("tr");
-    row.append(element("td", String(entry.sequence_id ?? entry.sequence ?? "")));
+    row.append(element("td", String(entry.sequence_id ?? entry.sequence ?? "—")));
     const open = element("button", short(entry.rollout_id, 14), "link-button");
     open.type = "button";
     open.title = entry.rollout_id;

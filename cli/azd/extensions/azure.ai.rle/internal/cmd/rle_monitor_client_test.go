@@ -129,11 +129,13 @@ func TestRleMonitorClientRoutesAndScopes(t *testing.T) {
 			}
 			body = `{"data":[{"step":8,"custom":1}],"nextContinuationToken":"opaque"}`
 		case strings.HasSuffix(req.URL.Path, "/rollouts"):
-			if req.URL.Query().Get("lastSequence") != "-1" {
-				t.Fatal("missing sequence watermark")
+			query := req.URL.Query()
+			if query.Has("lastSequence") || query.Get("after") != monitorTestID || query.Get("limit") != "100" ||
+				query.Get("createdAfter") != "2026-01-02T03:04:05.000000006Z" || query.Get("continuationToken") != "t+/=" {
+				t.Fatalf("unexpected rollout query %s", req.URL.RawQuery)
 			}
 			body = `{"data":[{"rollout_id":"` + monitorTestID + `","job_id":"` + realMonitorJobID +
-				`","sequence_id":0,"status":"completed","success":false}]}`
+				`","status":"completed","success":false}]}`
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
 	})
@@ -151,7 +153,9 @@ func TestRleMonitorClientRoutesAndScopes(t *testing.T) {
 	if err != nil || page.Next != "opaque" {
 		t.Fatalf("%+v %v", page, err)
 	}
-	entries, err := s.Rollouts(t.Context(), -1, "")
+	entries, err := s.Rollouts(t.Context(), monitor.RolloutQuery{
+		After: monitorTestID, CreatedAfter: time.Date(2026, 1, 2, 3, 4, 5, 6, time.FixedZone("x", 3600)).Add(time.Hour),
+	}, "t+/=")
 	if err != nil || entries.Data[0].Success == nil || *entries.Data[0].Success {
 		t.Fatalf("%+v %v", entries, err)
 	}

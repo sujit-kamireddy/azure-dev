@@ -640,7 +640,8 @@ rollout summaries. Full rollout results/graphs are fetched **only on click**.
 An unregistered job shows a waiting state; unavailable/expired results leave
 metadata visible. The producer must register the same job ID, publish complete
 metric rows with a nonnegative integer `step` (`step_id` alone is not sufficient),
-and associate rollouts with the job and a nonnegative `sequence_id`.
+and associate rollouts with the job. `sequence_id` is optional; rollouts are listed in
+creation order.
 
 The CLI caches data in memory: the latest 5,000 metric rows (up to 32 MiB) and the
 latest 1,000 rollout summaries. The UI identifies truncated history. Restarting reloads persisted
@@ -652,8 +653,10 @@ Polling is shared across browser tabs:
 | Data | Interval |
 | --- | --- |
 | Config | 5 seconds until registered, then cached |
-| New metrics and rollout summaries (incremental) | 5 seconds |
-| Rollout summary reread, for status changes and late rows | 15 seconds |
+| New metrics (incremental) | 5 seconds |
+| New rollout summaries, listed after the last one seen | 15 seconds |
+| Running rollouts, point-read for status and results (newest 50) | 1 minute |
+| Full rollout list reconciliation, and once after the job settles | 5 minutes |
 | Metric reread, for late rows | 60 seconds |
 | Fine-tuning job status | 15 seconds until terminal |
 | Full rollout result | On click only |
