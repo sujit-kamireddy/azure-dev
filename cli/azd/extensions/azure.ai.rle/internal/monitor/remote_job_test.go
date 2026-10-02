@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -358,6 +359,58 @@ func TestRemoteRunningRefreshIsBoundedAndKeepsCacheBounds(t *testing.T) {
 	reader.detail = func(string) (JobRollout, error) { return JobRollout{JobID: "another-job"}, nil }
 	if err := j.refreshRunning(t.Context(), now); err == nil {
 		t.Fatal("cross-job metadata accepted")
+	}
+}
+
+func TestRemoteRunningRefreshPrefersWatchedRows(t *testing.T) {
+	reader := newMemoryJobSource()
+	j := newRemoteJob(reader, remoteTestJob)
+	now := remoteTestTime
+	for index := range runningPerRefresh + 10 {
+		entry := testRollout(index, now.Add(time.Duration(index)*time.Second))
+		entry.Status = "running"
+		j.entries[entry.RolloutID] = entry
+		j.readAt[entry.RolloutID] = now
+	}
+	oldest := fmt.Sprintf("%032x", 0)
+	handler := http.NewServeMux()
+	registerRemoteRoutes(handler, j)
+	remoteRequest(t, handler, "GET", "/api/rollouts?watch="+oldest+",not-an-id")
+	if len(j.watched) != 1 || j.watched[0] != oldest {
+		t.Fatalf("watch list not parsed: %v", j.watched)
+	}
+	j.watchedAt = now
+	var read []string
+	reader.detail = func(id string) (JobRollout, error) {
+		read = append(read, id)
+		entry := testRollout(0, time.Time{})
+		entry.RolloutID, entry.Status = id, "running"
+		return entry, nil
+	}
+	if err := j.refreshRunning(t.Context(), now.Add(rolloutWatchedEvery)); err != nil {
+		t.Fatal(err)
+	}
+	if len(read) != 1 || read[0] != oldest {
+		t.Fatalf("only the watched row is due after 10s: %v", read)
+	}
+	read = nil
+	j.watchedAt = now.Add(rolloutRunningEvery) // The page keeps naming it.
+	if err := j.refreshRunning(t.Context(), now.Add(rolloutRunningEvery)); err != nil {
+		t.Fatal(err)
+	}
+	if len(read) != runningPerRefresh || !slices.Contains(read, oldest) {
+		t.Fatalf("watched row not kept ahead of the bound: %d reads", len(read))
+	}
+	read = nil
+	later := now.Add(rolloutRunningEvery + watchExpiry)
+	for id := range j.entries {
+		j.readAt[id] = later
+	}
+	if err := j.refreshRunning(t.Context(), later.Add(rolloutWatchedEvery)); err != nil {
+		t.Fatal(err)
+	}
+	if len(read) != 0 {
+		t.Fatalf("expired watch still read every 10s: %v", read)
 	}
 }
 

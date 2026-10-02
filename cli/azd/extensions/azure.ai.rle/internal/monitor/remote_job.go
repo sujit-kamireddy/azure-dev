@@ -13,6 +13,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,14 +26,19 @@ const (
 	pagesPerRefresh    = 10
 
 	// New rollouts are discovered after the last one seen, which is usually one
-	// small indexed page. Running rows are refreshed by point reads. The service
-	// does not replay updates, and its creation-order listing can briefly hide
-	// concurrent writes behind the anchor, so a full list periodically
-	// reconciles both.
+	// small indexed page. Running rows are refreshed by point reads: those the
+	// page is showing every 10 seconds, the rest about once a minute. The
+	// service does not replay updates, and its creation-order listing can
+	// briefly hide concurrent writes behind the anchor, so a full list
+	// periodically reconciles both.
 	rolloutDiscoverEvery  = time.Minute
+	rolloutWatchedEvery   = 10 * time.Second
 	rolloutRunningEvery   = time.Minute
 	rolloutReconcileEvery = 5 * time.Minute
 	runningPerRefresh     = 50
+	// The page names the rows it shows on every poll, so a list it stopped
+	// naming for this long is no longer on screen.
+	watchExpiry = 30 * time.Second
 )
 
 // Reasons automatic polling stopped, reported to the page as "paused".
@@ -121,6 +127,9 @@ type remoteJob struct {
 	terminalAt time.Time
 	paused     string
 	limited    bool
+	// watched names the running rollouts the page last reported showing.
+	watched   []string
+	watchedAt time.Time
 
 	metricCursor pageCursor
 	// rolloutAnchor is the last rollout, in server order, of the last finished
@@ -265,7 +274,7 @@ func (j *remoteJob) refresh(ctx context.Context, now time.Time, force bool) {
 	reads.Go(func() {
 		j.poll(ctx, now, "rollouts", rolloutDiscoverEvery, func() error { return j.readRollouts(ctx, now) })
 		// After the list, so rows it just returned are not point-read again.
-		j.poll(ctx, now, "running", rolloutRunningEvery, func() error { return j.refreshRunning(ctx, now) })
+		j.poll(ctx, now, "running", rolloutWatchedEvery, func() error { return j.refreshRunning(ctx, now) })
 	})
 	if !terminal {
 		reads.Go(func() {
@@ -449,18 +458,31 @@ func rolloutSettled(status string) bool {
 
 // refreshRunning point-reads cached rollouts that are still running and were
 // not read recently, because listing after the anchor never returns their
-// later status or result.
+// later status or result. Rows the page is showing come first and are due
+// sooner; a read is skipped when the last one was under half an interval ago.
 func (j *remoteJob) refreshRunning(ctx context.Context, now time.Time) error {
 	j.mu.Lock()
-	var ids []string
+	watched := map[string]bool{}
+	if now.Sub(j.watchedAt) < watchExpiry {
+		for _, id := range j.watched {
+			watched[id] = true
+		}
+	}
+	var ids, others []string
 	for _, entry := range j.sortedEntries() {
-		if !rolloutSettled(entry.Status) && now.Sub(j.readAt[entry.RolloutID]) >= rolloutRunningEvery/2 {
-			ids = append(ids, entry.RolloutID)
+		id, age := entry.RolloutID, now.Sub(j.readAt[entry.RolloutID])
+		switch {
+		case rolloutSettled(entry.Status):
+		case watched[id] && age >= rolloutWatchedEvery/2:
+			ids = append(ids, id)
+		case !watched[id] && age >= rolloutRunningEvery-rolloutWatchedEvery/2:
+			others = append(others, id)
 		}
 	}
 	j.mu.Unlock()
-	// Prefer the newest running rows; older stragglers are caught by reconciliation.
-	ids = ids[max(0, len(ids)-runningPerRefresh):]
+	// Then the newest other running rows; older stragglers are caught by reconciliation.
+	ids = ids[:min(len(ids), runningPerRefresh)]
+	ids = append(ids, others[max(0, len(others)-(runningPerRefresh-len(ids))):]...)
 	var (
 		reads    sync.WaitGroup
 		firstErr error
@@ -539,6 +561,9 @@ func registerRemoteRoutes(mux *http.ServeMux, j *remoteJob) {
 	mux.HandleFunc("GET /api/rollouts", func(w http.ResponseWriter, r *http.Request) {
 		j.mu.Lock()
 		defer j.mu.Unlock()
+		if r.URL.Query().Has("watch") {
+			j.watched, j.watchedAt = parseWatched(r.URL.Query().Get("watch")), time.Now()
+		}
 		writeRunJSON(w, map[string]any{
 			"job_id": j.jobID, "backend": "rle", "data": j.sortedEntries(), "reset": true,
 		})
@@ -591,6 +616,20 @@ func registerRemoteRoutes(mux *http.ServeMux, j *remoteJob) {
 	for _, path := range []string{"/api/rollouts/states", "/api/run/logs"} {
 		mux.HandleFunc("GET "+path, http.NotFound)
 	}
+}
+
+// parseWatched keeps at most one refresh worth of valid rollout IDs.
+func parseWatched(raw string) []string {
+	var ids []string
+	for id := range strings.SplitSeq(raw, ",") {
+		if len(ids) == runningPerRefresh {
+			break
+		}
+		if rollouts.ValidateID(id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func writeRemoteReadError(w http.ResponseWriter, err error) {

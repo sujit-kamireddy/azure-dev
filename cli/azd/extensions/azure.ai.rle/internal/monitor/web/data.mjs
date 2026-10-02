@@ -448,8 +448,17 @@ export async function fetchSnapshot(fetcher = fetch, rolloutID = "") {
 }
 
 // Returns null when the monitor serves a single saved rollout and has no set to browse.
-export async function fetchRolloutIndex(fetcher = fetch, after = "") {
-  const url = after ? `/api/rollouts?after=${encodeURIComponent(after)}` : "/api/rollouts";
+//
+// `watch`, when given, names the running rollouts on screen so a real-service
+// monitor refreshes their status sooner. An empty list says nothing is shown.
+export const WATCH_LIMIT = 50;
+
+export async function fetchRolloutIndex(fetcher = fetch, after = "", watch = null) {
+  const params = new URLSearchParams();
+  if (after) params.set("after", after);
+  if (Array.isArray(watch)) params.set("watch", watch.filter(Boolean).slice(0, WATCH_LIMIT).join(","));
+  const query = params.toString();
+  const url = query ? `/api/rollouts?${query}` : "/api/rollouts";
   let result;
   try {
     result = await fetcher(url, { credentials: "same-origin", cache: "no-store",

@@ -5,7 +5,7 @@ import {
   buildGraph, chartGeometry, chartHoverAt, chartPath, chartScales, fetchRolloutIndex, fetchRolloutStates, fetchRunLog, fetchRunMetrics,
   fetchRunOverview, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
   runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage,
-  STATE_REQUEST_LIMIT, TOKEN_PAGE_SIZE,
+  STATE_REQUEST_LIMIT, TOKEN_PAGE_SIZE, WATCH_LIMIT,
   toolCalls, toolCallSummary, withGroupSignal, remoteRolloutState, remoteRunNotices,
 } from "./data.mjs";
 
@@ -1091,6 +1091,17 @@ async function refreshRolloutStates() {
   return true;
 }
 
+// Running rollouts on screen, which a real-service monitor refreshes sooner
+// than the rest. Null outside that mode, so other monitors see no new query.
+function watchedRunning() {
+  if (!realService()) return null;
+  if (!rolloutIndex || byID("rollout-list").hidden) return [];
+  return visibleEntries()
+    .filter((entry) => remoteRolloutState(entry) === "running")
+    .slice(-WATCH_LIMIT)
+    .map((entry) => entry.rollout_id);
+}
+
 function unclassifiedVisible() {
   if (!rolloutIndex || byID("rollout-list").hidden) return [];
   const wanted = [];
@@ -1114,7 +1125,7 @@ async function pollForNewRollouts() {
     : "";
   let update;
   try {
-    update = await fetchRolloutIndex(fetch, last);
+    update = await fetchRolloutIndex(fetch, last, watchedRunning());
   } catch (error) {
     if (realService()) showRemoteError(error);
     // A poll that cannot reach the monitor is not worth reporting: the rollouts

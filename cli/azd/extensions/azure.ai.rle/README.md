@@ -655,7 +655,8 @@ Polling is shared across browser tabs:
 | Config | 5 seconds until registered, then cached |
 | New metrics (incremental) | 10 seconds |
 | New rollout summaries, listed after the last one seen | 1 minute |
-| Running rollouts, point-read for status and results (newest 50) | 1 minute |
+| Running rollouts shown on the open Rollouts tab, point-read for status and results | 10 seconds |
+| Other running rollouts (newest first, at most 50 reads per cycle) | 1 minute |
 | Full rollout list reconciliation, and once after the job settles | 5 minutes |
 | Metric reread, for late rows | 60 seconds |
 | Fine-tuning job status | 1 minute until terminal |
