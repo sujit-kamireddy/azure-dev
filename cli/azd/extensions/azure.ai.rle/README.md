@@ -654,18 +654,21 @@ Polling is shared across browser tabs:
 | --- | --- |
 | Config | 5 seconds until registered, then cached |
 | New metrics (incremental) | 10 seconds |
-| New rollout summaries, listed after the last one seen | 1 minute |
+| Rollout summaries, a full oldest-first list scan of the job | 1 minute |
 | Running rollouts shown on the open Rollouts tab, point-read for status and results | 10 seconds |
 | Other running rollouts (newest first, at most 50 reads per cycle) | 1 minute |
-| Full rollout list reconciliation, and once after the job settles | 5 minutes |
 | Metric reread, for late rows | 60 seconds |
 | Fine-tuning job status | 1 minute until terminal |
 | Full rollout result | On click only |
 
-Rereads cover only the retained window and run in bounded page batches. Service
+Each rollout scan starts without a continuation token and follows tokens, including
+across empty pages, until none is returned; summaries are merged by `rollout_id`.
+Scans and rereads run in bounded page batches, and an unfinished scan continues on
+the next tick. Large jobs therefore reread every summary page each minute.
+Service errors include their operation and request IDs. Service
 errors back off and respect `Retry-After`; existing data remains visible with an
 error/freshness notice. `FeatureDisabled` stops automatic polling. After terminal job status, polling pauses once a 60-second settling
-period and final reconciliation have completed successfully. **Refresh service
+period and a final full scan have completed successfully. **Refresh service
 data** checks for later arrivals without downloading any graphs.
 
 The current API has no training logs, rollout split, training-step mapping, or

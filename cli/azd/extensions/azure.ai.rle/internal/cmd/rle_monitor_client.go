@@ -20,8 +20,10 @@ import (
 	"azure.ai.rle/internal/rollouts"
 )
 
-var rleJobIDPattern = regexp.MustCompile(`^ftjob-[0-9a-f]{24}$`)
+// Fine-tuning job IDs carry 24 or 32 lowercase hexadecimal characters.
+var rleJobIDPattern = regexp.MustCompile(`^ftjob-(?:[0-9a-f]{24}|[0-9a-f]{32})$`)
 var monitorErrorCodePattern = regexp.MustCompile(`^[A-Za-z0-9_]{1,80}$`)
+var monitorCorrelationPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
 
 type rleJobSource struct {
 	rle     *rleClient
@@ -64,18 +66,13 @@ func (s *rleJobSource) Metrics(
 	return page, err
 }
 
-// Rollouts lists the job's rollouts in creation order. It never sends
-// lastSequence, so rollouts without a sampler sequence_id are included.
+// Rollouts reads one page of the job's rollouts, oldest first. It never sends
+// lastSequence, so rollouts without a sampler sequence_id are included; the
+// service rejects after and createdAfter, so a scan advances only by token.
 func (s *rleJobSource) Rollouts(
-	ctx context.Context, filter monitor.RolloutQuery, token string,
+	ctx context.Context, token string,
 ) (monitor.JobPage[monitor.JobRollout], error) {
 	query := url.Values{"limit": {"100"}}
-	if filter.After != "" {
-		query.Set("after", filter.After)
-	}
-	if !filter.CreatedAfter.IsZero() {
-		query.Set("createdAfter", filter.CreatedAfter.UTC().Format(time.RFC3339Nano))
-	}
 	if token != "" {
 		query.Set("continuationToken", token)
 	}
@@ -188,14 +185,7 @@ func readMonitorJSON(
 		} else if deadline, err := http.ParseTime(resp.Header.Get("Retry-After")); err == nil {
 			readErr.RetryAfter = max(0, time.Until(deadline))
 		}
-		// Only retain the machine-readable error code, never an opaque service body.
-		var body struct {
-			Code string `json:"code"`
-		}
-		if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body) == nil &&
-			monitorErrorCodePattern.MatchString(body.Code) {
-			readErr.Code = body.Code
-		}
+		readErr.Code, readErr.Operation, readErr.Request = monitorErrorDetails(resp, readErr.Code)
 		return readErr
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
@@ -209,4 +199,44 @@ func readMonitorJSON(
 		return fmt.Errorf("decode monitor response: %w", err)
 	}
 	return nil
+}
+
+// monitorErrorDetails keeps only the machine-readable error code and the
+// correlation IDs needed for investigation, never an opaque service body.
+// Codes appear at the top level or under "error"; RLE reports its operation
+// ID under "correlation".
+func monitorErrorDetails(resp *http.Response, fallback string) (code, operation, request string) {
+	code = fallback
+	var body struct {
+		Code        string          `json:"code"`
+		Error       json.RawMessage `json:"error"`
+		Correlation struct {
+			Operation string `json:"operation"`
+			Request   string `json:"request"`
+		} `json:"correlation"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body) == nil {
+		var nested struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal(body.Error, &nested) == nil && monitorErrorCodePattern.MatchString(nested.Code) {
+			code = nested.Code
+		} else if monitorErrorCodePattern.MatchString(body.Code) {
+			code = body.Code
+		}
+		if monitorCorrelationPattern.MatchString(body.Correlation.Operation) {
+			operation = body.Correlation.Operation
+		}
+		request = body.Correlation.Request
+	}
+	for _, header := range []string{"x-ms-request-id", "apim-request-id", "x-request-id"} {
+		if value := resp.Header.Get(header); value != "" {
+			request = value
+			break
+		}
+	}
+	if !monitorCorrelationPattern.MatchString(request) {
+		request = ""
+	}
+	return code, operation, request
 }

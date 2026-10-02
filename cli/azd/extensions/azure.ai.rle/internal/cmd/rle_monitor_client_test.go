@@ -130,8 +130,9 @@ func TestRleMonitorClientRoutesAndScopes(t *testing.T) {
 			body = `{"data":[{"step":8,"custom":1}],"nextContinuationToken":"opaque"}`
 		case strings.HasSuffix(req.URL.Path, "/rollouts"):
 			query := req.URL.Query()
-			if query.Has("lastSequence") || query.Get("after") != monitorTestID || query.Get("limit") != "100" ||
-				query.Get("createdAfter") != "2026-01-02T03:04:05.000000006Z" || query.Get("continuationToken") != "t+/=" {
+			if query.Has("lastSequence") || query.Has("after") || query.Has("createdAfter") ||
+				query.Get("limit") != "100" || query.Get("continuationToken") != "t+/=" || len(query) != 3 ||
+				!strings.Contains(req.URL.RawQuery, "continuationToken=t%2B%2F%3D") {
 				t.Fatalf("unexpected rollout query %s", req.URL.RawQuery)
 			}
 			body = `{"data":[{"rollout_id":"` + monitorTestID + `","job_id":"` + realMonitorJobID +
@@ -153,9 +154,7 @@ func TestRleMonitorClientRoutesAndScopes(t *testing.T) {
 	if err != nil || page.Next != "opaque" {
 		t.Fatalf("%+v %v", page, err)
 	}
-	entries, err := s.Rollouts(t.Context(), monitor.RolloutQuery{
-		After: monitorTestID, CreatedAfter: time.Date(2026, 1, 2, 3, 4, 5, 6, time.FixedZone("x", 3600)).Add(time.Hour),
-	}, "t+/=")
+	entries, err := s.Rollouts(t.Context(), "t+/=")
 	if err != nil || entries.Data[0].Success == nil || *entries.Data[0].Success {
 		t.Fatalf("%+v %v", entries, err)
 	}
@@ -226,6 +225,41 @@ func TestMonitorReadLimitsAndCredentialNonDisclosure(t *testing.T) {
 		auth, nil, &target, 100)
 	if err == nil || strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("credential-bearing endpoint not rejected safely: %v", err)
+	}
+}
+
+func TestMonitorErrorKeepsCorrelationIDs(t *testing.T) {
+	auth := func(context.Context) (string, error) { return "******", nil }
+	for _, tc := range []struct {
+		name, body, header, code, operation, request string
+	}{
+		{"nested", `{"error":{"code":"ServiceError","message":"sig=secret"},` +
+			`"correlation":{"operation":"573804dcdf39af6a10d06775fc7cfc92","request":"abc-123"}}`,
+			"0f4c-77aa", "ServiceError", "573804dcdf39af6a10d06775fc7cfc92", "0f4c-77aa"},
+		{"unsafe", `{"error":{"code":"bad code!"},"correlation":{"operation":"x y"}}`,
+			"bad\nvalue", "Internal Server Error", "", ""},
+		{"body request", `{"correlation":{"request":"abc-123"}}`, "", "Internal Server Error", "", "abc-123"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				header := http.Header{}
+				if tc.header != "" {
+					header.Set("x-ms-request-id", tc.header)
+				}
+				return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader(tc.body)),
+					Header: header}, nil
+			})}
+			var target any
+			err := readMonitorJSON(t.Context(), client, "https://example.com", "/read", auth, nil, &target, 100)
+			readErr, ok := errors.AsType[*monitor.ReadError](err)
+			if !ok || readErr.Code != tc.code || readErr.Operation != tc.operation || readErr.Request != tc.request {
+				t.Fatalf("unexpected error: %#v", err)
+			}
+			if strings.Contains(err.Error(), "secret") ||
+				(tc.operation != "" && !strings.Contains(err.Error(), "operation ID "+tc.operation)) {
+				t.Fatalf("unexpected message: %v", err)
+			}
+		})
 	}
 }
 

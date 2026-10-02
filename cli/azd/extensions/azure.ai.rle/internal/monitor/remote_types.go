@@ -37,31 +37,34 @@ type JobPage[T any] struct {
 	Next string `json:"nextContinuationToken"`
 }
 
-// RolloutQuery selects a job's rollouts in creation order. After is a rollout
-// ID; only rollouts after it in server order are listed. CreatedAfter, when
-// set, excludes rollouts created at or before it.
-type RolloutQuery struct {
-	After        string
-	CreatedAfter time.Time
-}
-
 // JobSource reads real-service job data without local artifact files.
 type JobSource interface {
 	Config(context.Context) (json.RawMessage, error)
 	Metrics(context.Context, int64, string) (JobPage[json.RawMessage], error)
-	Rollouts(context.Context, RolloutQuery, string) (JobPage[JobRollout], error)
+	Rollouts(context.Context, string) (JobPage[JobRollout], error)
 	Detail(context.Context, string) (JobRollout, error)
 	Result(context.Context, JobRollout) (rollouts.Snapshot, error)
 	Status(context.Context) (string, error)
 }
 
-// ReadError preserves service status and throttling without exposing response bodies.
+// ReadError preserves service status, throttling, and correlation IDs without
+// exposing response bodies.
 type ReadError struct {
 	Status     int
 	Code       string
 	RetryAfter time.Duration
+	// Operation and Request identify the failed call for service investigation.
+	Operation string
+	Request   string
 }
 
 func (e *ReadError) Error() string {
-	return fmt.Sprintf("monitor service returned HTTP %d (%s)", e.Status, e.Code)
+	message := fmt.Sprintf("monitor service returned HTTP %d (%s)", e.Status, e.Code)
+	if e.Operation != "" {
+		message += "; operation ID " + e.Operation
+	}
+	if e.Request != "" {
+		message += "; request ID " + e.Request
+	}
+	return message
 }

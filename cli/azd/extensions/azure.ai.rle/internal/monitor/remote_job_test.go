@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -33,7 +34,7 @@ type memoryJobSource struct {
 	status               string
 	entry                JobRollout
 	metrics              func(int64, string) (JobPage[json.RawMessage], error)
-	rollouts             func(RolloutQuery, string) (JobPage[JobRollout], error)
+	rollouts             func(string) (JobPage[JobRollout], error)
 	detail               func(string) (JobRollout, error)
 }
 
@@ -59,13 +60,10 @@ func (s *memoryJobSource) Metrics(_ context.Context, after int64, token string) 
 	return JobPage[json.RawMessage]{Data: []json.RawMessage{json.RawMessage(`{"step":0,"optim/lr":0.0003}`)}}, nil
 }
 
-func (s *memoryJobSource) Rollouts(_ context.Context, query RolloutQuery, token string) (JobPage[JobRollout], error) {
+func (s *memoryJobSource) Rollouts(_ context.Context, token string) (JobPage[JobRollout], error) {
 	s.listCalls++
 	if s.rollouts != nil {
-		return s.rollouts(query, token)
-	}
-	if query.After == s.entry.RolloutID {
-		return JobPage[JobRollout]{Data: []JobRollout{}}, nil
+		return s.rollouts(token)
 	}
 	return JobPage[JobRollout]{Data: []JobRollout{s.entry}}, nil
 }
@@ -128,8 +126,8 @@ func TestRemoteMonitorPollsSummariesButNeverResultsUntilOpened(t *testing.T) {
 	if reader.resultCalls != 0 || reader.configCalls != 1 || reader.metricCalls != 1 || reader.detailCalls != 0 {
 		t.Fatalf("browser reads triggered remote calls: %+v", reader)
 	}
-	// Discovery after the anchor does not return the old row; the running
-	// refresh a minute later picks up its status change.
+	// Neither discovery nor the unwatched running refresh is due after 15s; the
+	// next full scan a minute later picks up the status change.
 	reader.entry.Status, reader.entry.ResultAvailable = "completed", true
 	reader.entry.Reward = new(0.5)
 	j.refresh(t.Context(), now.Add(15*time.Second), false)
@@ -142,15 +140,15 @@ func TestRemoteMonitorPollsSummariesButNeverResultsUntilOpened(t *testing.T) {
 		!strings.Contains(response.Body.String(), `"success":false`) {
 		t.Fatal(response.Body.String())
 	}
-	if reader.resultCalls != 0 || reader.detailCalls != 1 {
-		t.Fatalf("polling read results or extra details: %+v", reader)
+	if reader.resultCalls != 0 || reader.detailCalls != 0 {
+		t.Fatalf("polling read results or point-read a row the scan just returned: %+v", reader)
 	}
 	j.refresh(t.Context(), now.Add(2*time.Minute), false)
-	if reader.detailCalls != 1 {
-		t.Fatal("completed rollout was point-read again")
+	if reader.detailCalls != 0 {
+		t.Fatal("completed rollout was point-read")
 	}
 	response = remoteRequest(t, handler, "GET", "/api/rollout?id="+remoteTestRollout)
-	if response.Code != 200 || reader.resultCalls != 1 {
+	if response.Code != 200 || reader.resultCalls != 1 || reader.detailCalls != 1 {
 		t.Fatalf("click failed: %d %s", response.Code, response.Body)
 	}
 	reader.resultErr = &ReadError{Status: 404, Code: "RolloutResultNotFound"}
@@ -188,7 +186,7 @@ func TestRemoteMonitorRegistrationAndSchedule(t *testing.T) {
 		t.Fatalf("unexpected cadence: %+v", reader)
 	}
 	j.refresh(t.Context(), now.Add(time.Minute), false)
-	if reader.configCalls != 2 || reader.statusCalls != 2 || reader.listCalls != 2 || reader.detailCalls != 1 {
+	if reader.configCalls != 2 || reader.statusCalls != 2 || reader.listCalls != 2 || reader.detailCalls != 0 {
 		t.Fatalf("unexpected cadence: %+v", reader)
 	}
 }
@@ -243,19 +241,16 @@ func testRollout(index int, created time.Time) JobRollout {
 	}
 }
 
-func TestRemoteRolloutPagingAnchorsOnServerOrder(t *testing.T) {
+func TestRemoteRolloutScansStartWithoutTokenAndUpsert(t *testing.T) {
 	reader := newMemoryJobSource()
-	// The newest rollout has the smaller ID: anchoring must follow server order.
 	older, newer := testRollout(9, remoteTestTime), testRollout(1, remoteTestTime.Add(time.Second))
-	var queries []RolloutQuery
-	reader.rollouts = func(query RolloutQuery, token string) (JobPage[JobRollout], error) {
-		queries = append(queries, query)
-		if query.After != "" {
-			return JobPage[JobRollout]{Data: []JobRollout{}}, nil
-		}
+	newer.Status = "running" // Rows without sequence_id are accepted.
+	var tokens []string
+	reader.rollouts = func(token string) (JobPage[JobRollout], error) {
+		tokens = append(tokens, token)
 		switch token {
 		case "":
-			return JobPage[JobRollout]{Data: []JobRollout{}, Next: "empty"}, nil
+			return JobPage[JobRollout]{Data: []JobRollout{}, Next: "empty"}, nil // Empty page, more to come.
 		case "empty":
 			return JobPage[JobRollout]{Data: []JobRollout{older}, Next: "second"}, nil
 		default:
@@ -266,30 +261,28 @@ func TestRemoteRolloutPagingAnchorsOnServerOrder(t *testing.T) {
 	if err := j.readRollouts(t.Context(), remoteTestTime); err != nil {
 		t.Fatal(err)
 	}
-	if len(j.entries) != 2 || j.rolloutAnchor != newer.RolloutID || j.rolloutsReconciled != remoteTestTime {
-		t.Fatalf("scan not committed: %d %q", len(j.entries), j.rolloutAnchor)
-	}
-	// An empty discovery keeps the anchor.
-	if err := j.readRollouts(t.Context(), remoteTestTime.Add(15*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if queries[len(queries)-1].After != newer.RolloutID || j.rolloutAnchor != newer.RolloutID {
-		t.Fatalf("discovery did not start after the anchor: %+v", queries)
+	if len(j.entries) != 2 || j.rolloutScan != nil || j.rolloutsReconciled != remoteTestTime ||
+		!slices.Equal(tokens, []string{"", "empty", "second"}) {
+		t.Fatalf("scan not completed: %d entries, tokens %q", len(j.entries), tokens)
 	}
 	if got := j.sortedEntries(); got[0].RolloutID != older.RolloutID {
 		t.Fatal("rollouts not ordered by creation time")
 	}
-	// Reconciliation rereads everything.
-	if err := j.readRollouts(t.Context(), remoteTestTime.Add(rolloutReconcileEvery)); err != nil {
+	// The next discovery is a new full scan from the first page, and upserts.
+	newer.Status, newer.CreatedAt = "completed", time.Time{}
+	tokens = nil
+	if err := j.readRollouts(t.Context(), remoteTestTime.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if queries[len(queries)-3].After != "" {
-		t.Fatalf("reconciliation used the anchor: %+v", queries)
+	if !slices.Equal(tokens, []string{"", "empty", "second"}) || len(j.entries) != 2 {
+		t.Fatalf("discovery did not rescan from the first page: %q", tokens)
 	}
-	reader.rollouts = func(RolloutQuery, string) (JobPage[JobRollout], error) {
+	if entry := j.entries[newer.RolloutID]; entry.Status != "completed" || entry.CreatedAt.IsZero() {
+		t.Fatalf("upsert lost status or creation time: %+v", entry)
+	}
+	reader.rollouts = func(string) (JobPage[JobRollout], error) {
 		return JobPage[JobRollout]{Data: []JobRollout{}, Next: "repeat"}, nil
 	}
-	j.rolloutsReconciled = time.Time{}
 	if err := j.readRollouts(t.Context(), time.Now()); err == nil || j.rolloutScan != nil {
 		t.Fatal("expected repeated-token error and a reset scan")
 	}
@@ -301,23 +294,55 @@ func TestRemoteRolloutPagingAnchorsOnServerOrder(t *testing.T) {
 	}
 }
 
-func TestRemoteRolloutRejectedAnchorRescans(t *testing.T) {
+func TestRemoteUnfinishedRolloutScanContinuesNextTick(t *testing.T) {
 	reader := newMemoryJobSource()
-	var queries []RolloutQuery
-	reader.rollouts = func(query RolloutQuery, _ string) (JobPage[JobRollout], error) {
-		queries = append(queries, query)
-		if query.After == "gone" {
-			return JobPage[JobRollout]{}, &ReadError{Status: 400, Code: "InvalidIdentifier"}
+	reader.rollouts = func(token string) (JobPage[JobRollout], error) {
+		index, _ := strconv.Atoi(token) // The first page has no token.
+		page := JobPage[JobRollout]{Data: []JobRollout{testRollout(index, remoteTestTime)}}
+		if index < pagesPerRefresh+4 {
+			page.Next = fmt.Sprint(index + 1)
+		}
+		return page, nil
+	}
+	j := newRemoteJob(reader, remoteTestJob)
+	j.refresh(t.Context(), remoteTestTime, false)
+	if reader.listCalls != pagesPerRefresh || j.rolloutScan == nil || j.rolloutScan.token == "" {
+		t.Fatalf("first refresh read %d pages", reader.listCalls)
+	}
+	j.refresh(t.Context(), remoteTestTime.Add(time.Second), false)
+	if reader.listCalls != pagesPerRefresh+5 || j.rolloutScan != nil || len(j.entries) != pagesPerRefresh+5 ||
+		j.rolloutsReconciled != remoteTestTime {
+		t.Fatalf("unfinished scan did not continue on the next tick: %d calls", reader.listCalls)
+	}
+	j.refresh(t.Context(), remoteTestTime.Add(2*time.Second), false)
+	if reader.listCalls != pagesPerRefresh+5 {
+		t.Fatal("a finished scan restarted before the discovery interval")
+	}
+}
+
+func TestRemoteRolloutRejectedTokenRescans(t *testing.T) {
+	reader := newMemoryJobSource()
+	var tokens []string
+	reader.rollouts = func(token string) (JobPage[JobRollout], error) {
+		tokens = append(tokens, token)
+		if token != "" {
+			return JobPage[JobRollout]{}, &ReadError{Status: 400, Code: "InvalidContinuationToken"}
 		}
 		return JobPage[JobRollout]{Data: []JobRollout{reader.entry}}, nil
 	}
 	j := newRemoteJob(reader, remoteTestJob)
-	j.rolloutAnchor, j.rolloutsReconciled = "gone", remoteTestTime
+	j.rolloutScan = &rolloutScan{started: remoteTestTime, token: "stale", seen: map[string]bool{}}
 	if err := j.readRollouts(t.Context(), remoteTestTime.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if len(queries) != 2 || queries[1].After != "" || j.rolloutAnchor != remoteTestRollout {
-		t.Fatalf("rejected anchor not rebuilt: %+v %q", queries, j.rolloutAnchor)
+	if !slices.Equal(tokens, []string{"stale", ""}) || len(j.entries) != 1 {
+		t.Fatalf("rejected token not rescanned: %q", tokens)
+	}
+	reader.rollouts = func(string) (JobPage[JobRollout], error) {
+		return JobPage[JobRollout]{}, &ReadError{Status: 400, Code: "InvalidPagination"}
+	}
+	if err := j.readRollouts(t.Context(), remoteTestTime.Add(time.Minute)); err == nil {
+		t.Fatal("a 400 on the first page must surface, not loop")
 	}
 }
 
@@ -482,33 +507,20 @@ func TestRemoteFeatureDisabledStopsPolling(t *testing.T) {
 	}
 }
 
-func TestRemoteReconciliationStartsAtRetainedWindow(t *testing.T) {
+func TestRemoteRolloutCacheKeepsNewestRows(t *testing.T) {
 	reader := newMemoryJobSource()
-	var queries []RolloutQuery
-	reader.rollouts = func(query RolloutQuery, _ string) (JobPage[JobRollout], error) {
-		queries = append(queries, query)
+	reader.rollouts = func(string) (JobPage[JobRollout], error) {
 		page := JobPage[JobRollout]{Data: []JobRollout{}}
 		for index := range remoteRolloutLimit + 5 {
-			entry := testRollout(index, remoteTestTime.Add(time.Duration(index)*time.Second))
-			if entry.CreatedAt.After(query.CreatedAfter) && (query.After == "" || entry.RolloutID > query.After) {
-				page.Data = append(page.Data, entry)
-			}
+			page.Data = append(page.Data, testRollout(index, remoteTestTime.Add(time.Duration(index)*time.Second)))
 		}
 		return page, nil
 	}
 	j := newRemoteJob(reader, remoteTestJob)
-	now := remoteTestTime
-	for _, at := range []time.Duration{0, 15 * time.Second, rolloutReconcileEvery} {
-		if err := j.readRollouts(t.Context(), now.Add(at)); err != nil {
+	for _, at := range []time.Duration{0, time.Minute} {
+		if err := j.readRollouts(t.Context(), remoteTestTime.Add(at)); err != nil {
 			t.Fatal(err)
 		}
-	}
-	// Full, discovery after the anchor, then full again from the oldest retained row.
-	oldest := remoteTestTime.Add(5*time.Second - time.Microsecond)
-	newest := fmt.Sprintf("%032x", remoteRolloutLimit+4)
-	if len(queries) != 3 || !queries[0].CreatedAfter.IsZero() || queries[1].After != newest ||
-		queries[2].After != "" || !queries[2].CreatedAfter.Equal(oldest) {
-		t.Fatalf("unexpected reconciliation queries %+v", queries)
 	}
 	if _, kept := j.entries[fmt.Sprintf("%032x", 4)]; len(j.entries) != remoteRolloutLimit || !j.limited || kept {
 		t.Fatal("rollout cache not bounded to the newest rows")

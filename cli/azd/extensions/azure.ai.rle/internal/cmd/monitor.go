@@ -193,7 +193,7 @@ func validateRleJobID(jobID string) error {
 		return nil
 	}
 	return &azdext.LocalError{
-		Message: "job_id must start with ftjob- followed by 24 lowercase hexadecimal characters.",
+		Message: "job_id must start with ftjob- followed by 24 or 32 lowercase hexadecimal characters.",
 		Code:    "rle_invalid_job_id", Category: azdext.LocalErrorCategoryUser,
 		Suggestion: "Use the job ID returned by the real fine-tuning service.",
 	}
