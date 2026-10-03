@@ -98,7 +98,8 @@ func (f *fakeRleHarnessSampleCatalog) Copy(
 			"type = \"Harness\"\n" +
 			"subtype = \"HostedAgent\"\n" +
 			"agentName = \"code-repair-agent\"\n" +
-			"agentVersion = \"1\"\n"
+			"agentVersion = \"1\"\n" +
+			"environmentProtocol = \"mcp_environment\"\n"
 	}
 	if err := os.WriteFile(filepath.Join(sessionDir, "rle", project.RleConfigFile), []byte(rleToml), 0600); err != nil {
 		return "", err
@@ -171,6 +172,10 @@ func TestInitHostedAgentSampleSourceCopiesWorkingSample(t *testing.T) {
 		`subtype = 'HostedAgent'`,
 		`agentName = 'code-repair-agent'`,
 		`agentVersion = '1'`,
+		// init rewrites identity but must carry the sample's protocol through
+		// untouched: dropping it here would scaffold a project that publishes
+		// as legacy and never takes the MCP rollout path.
+		`environmentProtocol = 'mcp_environment'`,
 	} {
 		if !strings.Contains(string(config), expected) {
 			t.Fatalf("expected config to contain %q, got:\n%s", expected, config)

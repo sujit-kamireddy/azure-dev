@@ -45,6 +45,17 @@ const (
 	RleSubtypeBYOH        RleSubtype = "BYOH"
 )
 
+// RleEnvironmentProtocol selects how RLE drives a harness during a rollout.
+//
+// There is deliberately no constant for the legacy protocol. The service models
+// this as an optional field whose absence means legacy, and rejects every value
+// but the one below, so a legacy environment is published by omitting the field
+// rather than by naming it.
+type RleEnvironmentProtocol string
+
+// RleEnvironmentProtocolMcpEnvironment is the MCP reset, step, and close protocol.
+const RleEnvironmentProtocolMcpEnvironment RleEnvironmentProtocol = "mcp_environment"
+
 // RleConfig is the host-agnostic source configuration for one immutable RLE release.
 type RleConfig struct {
 	SchemaVersion *string                 `toml:"schema_version,omitempty"`
@@ -71,6 +82,13 @@ type RleManifest struct {
 	AgentName    *string `toml:"agentName,omitempty"`
 	AgentVersion *string `toml:"agentVersion,omitempty"`
 	BaseURL      *string `toml:"baseUrl,omitempty"`
+
+	// EnvironmentProtocol is immutable for a published version, because RLE
+	// resolves the rollout path from it and a version that changed protocol
+	// mid-life would not be the environment a finished run was trained against.
+	// Omit it to publish a legacy harness; that is what the service reads an
+	// absent value as.
+	EnvironmentProtocol *RleEnvironmentProtocol `toml:"environmentProtocol,omitempty"`
 }
 
 // RleEnvironmentDefaults contains reusable version-scoped training defaults.
@@ -215,6 +233,14 @@ func NormalizeRleConfig(config RleConfig) (RleConfig, error) {
 		return RleConfig{}, err
 	}
 	manifest.Subtype, err = normalizeRleSubtype(manifest.Subtype)
+	if err != nil {
+		return RleConfig{}, err
+	}
+	manifest.EnvironmentProtocol, err = normalizeRleEnvironmentProtocol(
+		manifest.EnvironmentProtocol,
+		manifest.Type,
+		manifest.Subtype,
+	)
 	if err != nil {
 		return RleConfig{}, err
 	}
@@ -675,6 +701,42 @@ func normalizeRleSubtype(value RleSubtype) (RleSubtype, error) {
 			`Set rle.subtype to "OpenEnv", "HostedAgent", or "BYOH".`,
 		)
 	}
+}
+
+// normalizeRleEnvironmentProtocol mirrors the service's own rule: an absent
+// protocol means legacy, the only nameable protocol is mcp_environment, and only
+// a Harness HostedAgent or BYOH version may carry one. Checking it here turns a
+// publish-time 400 into a message that names the manifest field.
+func normalizeRleEnvironmentProtocol(
+	value *RleEnvironmentProtocol,
+	rleType RleType,
+	subtype RleSubtype,
+) (*RleEnvironmentProtocol, error) {
+	if value == nil {
+		return nil, nil
+	}
+	normalized := RleEnvironmentProtocol(strings.ToLower(strings.TrimSpace(string(*value))))
+	if normalized == "" {
+		return nil, nil
+	}
+	if normalized != RleEnvironmentProtocolMcpEnvironment {
+		return nil, localError(
+			fmt.Sprintf("rle.environmentProtocol must be %q.", RleEnvironmentProtocolMcpEnvironment),
+			"rle_manifest_environment_protocol_invalid",
+			fmt.Sprintf(
+				"Set rle.environmentProtocol = %q, or remove it to publish the legacy protocol.",
+				RleEnvironmentProtocolMcpEnvironment,
+			),
+		)
+	}
+	if rleType != RleTypeHarness || (subtype != RleSubtypeHostedAgent && subtype != RleSubtypeBYOH) {
+		return nil, localError(
+			"rle.environmentProtocol is allowed only when rle.type is Harness and rle.subtype is HostedAgent or BYOH.",
+			"rle_manifest_environment_protocol_invalid",
+			"Remove rle.environmentProtocol, or publish this environment as a Harness HostedAgent or BYOH.",
+		)
+	}
+	return &normalized, nil
 }
 
 func normalizeRequiredAgentField(value *string, fieldName string, maximumLength int, requiredCode string) (string, error) {
