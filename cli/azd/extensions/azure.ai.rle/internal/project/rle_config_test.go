@@ -380,6 +380,121 @@ agentVersion = "15"
 	}
 }
 
+func TestLoadRleConfigCarriesTheMcpEnvironmentProtocol(t *testing.T) {
+	dir := t.TempDir()
+	content := `[rle]
+name = "competitive_intelligence_agent"
+version = "2.0.0"
+type = "Harness"
+subtype = "HostedAgent"
+agentName = "ci-agent"
+agentVersion = "15"
+environmentProtocol = "  MCP_Environment  "
+`
+	if err := os.WriteFile(filepath.Join(dir, RleConfigFile), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := LoadRleConfig(dir)
+	if err != nil {
+		t.Fatalf("a manifest that names the MCP protocol should load, got %v", err)
+	}
+	if config.Rle.EnvironmentProtocol == nil {
+		t.Fatal("environmentProtocol was dropped: publish would silently register a legacy environment")
+	}
+	if *config.Rle.EnvironmentProtocol != RleEnvironmentProtocolMcpEnvironment {
+		t.Fatalf("environmentProtocol = %q, want %q", *config.Rle.EnvironmentProtocol, RleEnvironmentProtocolMcpEnvironment)
+	}
+
+	roundTrip := t.TempDir()
+	if err := WriteRleConfig(roundTrip, config); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	reloaded, err := LoadRleConfig(roundTrip)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Rle.EnvironmentProtocol == nil ||
+		*reloaded.Rle.EnvironmentProtocol != RleEnvironmentProtocolMcpEnvironment {
+		t.Fatalf("protocol did not survive a canonical write, got %v", reloaded.Rle.EnvironmentProtocol)
+	}
+}
+
+func TestNormalizeRleConfigRestrictsTheEnvironmentProtocol(t *testing.T) {
+	hostedAgent := func(protocol *RleEnvironmentProtocol) RleConfig {
+		return RleConfig{Rle: RleManifest{
+			Name:                "competitive_intelligence_agent",
+			Version:             "2.0.0",
+			Type:                RleTypeHarness,
+			Subtype:             RleSubtypeHostedAgent,
+			AgentName:           new("ci-agent"),
+			AgentVersion:        new("15"),
+			EnvironmentProtocol: protocol,
+		}}
+	}
+
+	t.Run("omitted means legacy", func(t *testing.T) {
+		config, err := NormalizeRleConfig(hostedAgent(nil))
+		if err != nil {
+			t.Fatalf("omitting the protocol must stay valid, got %v", err)
+		}
+		if config.Rle.EnvironmentProtocol != nil {
+			t.Fatal("an absent protocol must not be defaulted: the service reads absence as legacy")
+		}
+	})
+
+	t.Run("empty is absent, not invalid", func(t *testing.T) {
+		config, err := NormalizeRleConfig(hostedAgent(new(RleEnvironmentProtocol(""))))
+		if err != nil {
+			t.Fatalf("an empty protocol should normalize away, got %v", err)
+		}
+		if config.Rle.EnvironmentProtocol != nil {
+			t.Fatalf("empty protocol survived as %v", config.Rle.EnvironmentProtocol)
+		}
+	})
+
+	t.Run("byoh may carry it", func(t *testing.T) {
+		_, err := NormalizeRleConfig(RleConfig{Rle: RleManifest{
+			Name:                "customer_agent",
+			Version:             "2.0.0",
+			Type:                RleTypeHarness,
+			Subtype:             RleSubtypeBYOH,
+			BaseURL:             new("https://harness.example.com/rle/"),
+			EnvironmentProtocol: new(RleEnvironmentProtocolMcpEnvironment),
+		}})
+		if err != nil {
+			t.Fatalf("BYOH is one of the two subtypes the service allows, got %v", err)
+		}
+	})
+
+	t.Run("no other protocol is nameable", func(t *testing.T) {
+		_, err := NormalizeRleConfig(hostedAgent(new(RleEnvironmentProtocol("legacy"))))
+		assertLocalErrorCode(t, err, "rle_manifest_environment_protocol_invalid")
+	})
+
+	t.Run("gym may not carry it", func(t *testing.T) {
+		_, err := NormalizeRleConfig(RleConfig{Rle: RleManifest{
+			Name:                "code_rl",
+			Version:             "2.0.0",
+			Type:                RleTypeGym,
+			Subtype:             RleSubtypeOpenEnv,
+			EnvironmentProtocol: new(RleEnvironmentProtocolMcpEnvironment),
+		}})
+		assertLocalErrorCode(t, err, "rle_manifest_environment_protocol_invalid")
+	})
+}
+
+func assertLocalErrorCode(t *testing.T, err error, wantCode string) {
+	t.Helper()
+	var localErr *azdext.LocalError
+	if !errors.As(err, &localErr) {
+		t.Fatalf("expected a local error with code %s, got %v", wantCode, err)
+	}
+	if localErr.Code != wantCode {
+		t.Fatalf("error code = %q, want %q", localErr.Code, wantCode)
+	}
+}
+
 func TestNormalizeRleConfigEnforcesControlPlaneTypeContract(t *testing.T) {
 	tests := []struct {
 		name     string

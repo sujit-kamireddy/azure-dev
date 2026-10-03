@@ -194,6 +194,36 @@ baseUrl = "https://harness.example.com/rle/"
 `draft-<positive-unix-timestamp>`. BYOH harness URLs must be absolute HTTPS URLs
 without credentials, a query string, or a fragment.
 
+### Environment protocol
+
+A harness declares how RLE should drive it during a rollout:
+
+```toml
+[rle]
+name = "support_rle"
+version = "2.0.0"
+type = "Harness"
+subtype = "HostedAgent"
+agentName = "support-agent"
+agentVersion = "12"
+environmentProtocol = "mcp_environment"
+```
+
+`mcp_environment` is the only value. Omit the field to publish a harness on the
+legacy protocol; that is what an absent value means to the service, which is why
+there is no name for it.
+
+The protocol is fixed when the version is published and cannot be changed
+afterwards, because a run is only reproducible if the environment it trained
+against still behaves the same way. Switching protocols means publishing a new
+version. `publish` prints the protocol the service recorded and fails if it does
+not match the manifest, so a silently legacy environment is caught at publish
+rather than in a training run.
+
+Only `Harness`/`HostedAgent` and `Harness`/`BYOH` may declare a protocol. A
+`Gym`/`OpenEnv` environment already speaks one callable interface, so naming a
+protocol there is rejected.
+
 ### Version-scoped defaults
 
 `schema_version` is a root-level manifest field, separate from the immutable
