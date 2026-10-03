@@ -3,7 +3,10 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { remoteRolloutState, remoteRunNotices, runFacts, runCharts, fetchSnapshot } from "./web/data.mjs";
+import {
+  remoteRolloutState, remoteRunNotices, runFacts, runCharts, fetchSnapshot,
+  unavailableRolloutFacts, unavailableRolloutMessage,
+} from "./web/data.mjs";
 
 test("remote execution state comes from metadata, not the task verdict", () => {
   assert.equal(remoteRolloutState({ status: "completed", success: false }), "completed");
@@ -46,4 +49,21 @@ test("selected rollout fetch accepts unavailable metadata without inventing a gr
   assert.deepEqual(calls, ["/api/rollout?id=abc"]);
   assert.equal(result, payload);
   assert.equal(result.response, undefined);
+});
+
+test("an unavailable rollout explains its state and summarizes service metadata", () => {
+  const failed = {
+    rollout_id: "77ddddcf0bd44cc99e5642c3dd022e4d", job_id: "ftjob-1", environment_name: "math_rl",
+    environment_version: "1.0.8", created_at_utc: "2026-10-02T22:05:18Z", status: "failed",
+    latency_s: 22.1011194, checkpoint_id: "step0", session_id: "session_1a74b5e9", has_graph: false,
+  };
+  assert.match(unavailableRolloutMessage(failed), /failed before producing a result/);
+  assert.match(unavailableRolloutMessage({ status: "running" }), /still running/);
+  assert.match(unavailableRolloutMessage({ status: "completed" }), /not retained or has expired/);
+  assert.match(unavailableRolloutMessage({}), /not available/);
+  assert.deepEqual(unavailableRolloutFacts(failed), [
+    ["State", "Failed"], ["Environment", "math_rl 1.0.8"], ["Checkpoint", "step0"], ["Latency", "22.1s"],
+    ["Created", "2026-10-02T22:05:18Z"], ["Session", "session_1a74b5e9"], ["Job", "ftjob-1"],
+  ]);
+  assert.deepEqual(unavailableRolloutFacts({ status: "expired", reward: 0 }), [["State", "expired"], ["Reward", "0.000"]]);
 });

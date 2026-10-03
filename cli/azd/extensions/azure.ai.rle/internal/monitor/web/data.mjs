@@ -1177,6 +1177,39 @@ export function remoteRolloutState(entry) {
   return ["running", "completed", "failed"].includes(entry?.status) ? entry.status : "unknown";
 }
 
+// A rollout whose result cannot be read is still shown as a rollout: what the
+// service knows about it, and why there is nothing more to open.
+export function unavailableRolloutMessage(entry) {
+  switch (remoteRolloutState(entry)) {
+    case "failed":
+      return "This rollout failed before producing a result, so there is no conversation or graph to show.";
+    case "running":
+      return "This rollout is still running. Its conversation and graph appear when it completes; use Refresh rollout to check again.";
+    case "completed":
+      return "This rollout completed, but its result was not retained or has expired.";
+    default:
+      return "The result for this rollout is not available.";
+  }
+}
+
+export function unavailableRolloutFacts(entry) {
+  const facts = [];
+  const add = (label, value) => {
+    if (value !== undefined && value !== null && value !== "") facts.push([label, String(value)]);
+  };
+  const state = remoteRolloutState(entry);
+  add("State", state === "unknown" ? entry?.status : state[0].toUpperCase() + state.slice(1));
+  add("Environment", entry?.environment_name
+    ? `${entry.environment_name}${entry.environment_version ? ` ${entry.environment_version}` : ""}` : "");
+  add("Checkpoint", entry?.checkpoint_id);
+  add("Latency", isNumber(entry?.latency_s) ? `${entry.latency_s.toFixed(1)}s` : "");
+  add("Reward", isNumber(entry?.reward) ? entry.reward.toFixed(3) : "");
+  add("Created", entry?.created_at_utc);
+  add("Session", entry?.session_id);
+  add("Job", entry?.job_id);
+  return facts;
+}
+
 export function remoteRunNotices(overview) {
   const notes = [];
   if (!overview?.run?.config) notes.push("Waiting for job registration; the job ID may not yet exist in this project.");

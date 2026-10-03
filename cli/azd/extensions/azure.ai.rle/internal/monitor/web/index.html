@@ -24,12 +24,16 @@
     <p id="load-status" class="notice" role="status">Loading saved snapshot…</p>
     <div id="remote-status" class="notice" role="status" hidden></div>
     <p id="remote-controls" hidden><button id="remote-refresh" type="button">Refresh service data</button></p>
-    <section id="remote-detail" class="panel" hidden>
-      <h2>Rollout result unavailable</h2>
-      <p id="remote-detail-message"></p>
-      <pre id="remote-detail-metadata"></pre>
-      <button id="remote-detail-retry" type="button">Retry selected rollout</button>
-      <button id="remote-detail-close" type="button">Close details</button>
+    <section id="remote-detail" class="panel" aria-labelledby="remote-detail-title" hidden>
+      <p class="section-block"><button id="remote-detail-back" type="button">&#8592; All rollouts</button></p>
+      <h2 id="remote-detail-title">Rollout</h2>
+      <p class="muted"><span class="muted">ROLLOUT</span> <code id="remote-detail-id"></code></p>
+      <p id="remote-detail-message" class="notice"></p>
+      <div id="remote-detail-facts" class="run-facts"></div>
+      <details>
+        <summary>Service metadata</summary>
+        <pre id="remote-detail-metadata"></pre>
+      </details>
     </section>
     <section id="load-error" class="error-panel" aria-labelledby="error-title" hidden>
       <h2 id="error-title">Snapshot unavailable</h2>

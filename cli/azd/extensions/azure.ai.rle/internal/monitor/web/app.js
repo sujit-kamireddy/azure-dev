@@ -7,6 +7,7 @@ import {
   runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage,
   STATE_REQUEST_LIMIT, TOKEN_PAGE_SIZE, WATCH_LIMIT,
   toolCalls, toolCallSummary, withGroupSignal, remoteRolloutState, remoteRunNotices,
+  unavailableRolloutFacts, unavailableRolloutMessage,
 } from "./data.mjs";
 
 const byID = (id) => document.getElementById(id);
@@ -1006,6 +1007,38 @@ function showRolloutsForStep(step) {
   selectTab("rollouts", true);
 }
 
+// A rollout without a readable result still opens as a rollout view, in place
+// of the job tabs, so going back works the same way for every row.
+function showUnavailableRollout(rolloutID, metadata) {
+  byID("load-status").className = "sr-only";
+  byID("load-status").textContent = "";
+  byID("snapshot").hidden = true;
+  byID("job-tabs").hidden = true;
+  byID("rollout-list").hidden = true;
+  byID("run-overview").hidden = true;
+  byID("run-log").hidden = true;
+  const name = metadata?.environment_name;
+  byID("remote-detail-title").textContent = name ? `${name} rollout` : "Rollout";
+  byID("remote-detail-id").textContent = rolloutID;
+  byID("remote-detail-message").textContent = unavailableRolloutMessage(metadata);
+  const facts = unavailableRolloutFacts(metadata);
+  byID("remote-detail-facts").replaceChildren(...(facts.length ? [factGroup("SUMMARY", facts)] : []));
+  byID("remote-detail-metadata").textContent = JSON.stringify(metadata ?? {}, null, 2);
+  byID("remote-detail").hidden = false;
+  updateRefreshLabel();
+  byID("remote-detail-back").focus();
+}
+
+function closeRollout() {
+  ++selectionVersion;
+  byID("back-to-list").hidden = true;
+  byID("remote-detail").hidden = true;
+  byID("remote-detail-metadata").textContent = "";
+  renderRolloutList();
+  showRolloutList();
+  updateRefreshLabel();
+}
+
 async function openRollout(rolloutID) {
   const version = ++selectionVersion;
   selectedRollout = rolloutID;
@@ -1017,12 +1050,7 @@ async function openRollout(rolloutID) {
     if (version !== selectionVersion) return;
     byID("remote-detail").hidden = true;
     if (snapshot.unavailable) {
-      byID("load-status").textContent = "";
-      byID("remote-detail").hidden = false;
-      byID("remote-detail-message").textContent =
-        "The result is not available yet, was not retained, or has expired. Summary data remains available.";
-      byID("remote-detail-metadata").textContent = JSON.stringify(snapshot.metadata, null, 2);
-      updateRefreshLabel();
+      showUnavailableRollout(rolloutID, snapshot.metadata);
       return;
     }
     setSnapshot(snapshot);
@@ -1576,13 +1604,8 @@ async function load() {
   }
 }
 
-byID("back-button").addEventListener("click", () => {
-  ++selectionVersion;
-  byID("back-to-list").hidden = true;
-  renderRolloutList();
-  showRolloutList();
-  updateRefreshLabel();
-});
+byID("back-button").addEventListener("click", closeRollout);
+byID("remote-detail-back").addEventListener("click", closeRollout);
 byID("list-split").addEventListener("change", renderRolloutList);
 byID("list-step").addEventListener("change", renderRolloutList);
 
@@ -1605,13 +1628,6 @@ function updateRefreshLabel() {
   byID("remote-refresh").textContent = rolloutOpen() ? "Refresh rollout" : "Refresh service data";
 }
 
-byID("remote-detail-retry").addEventListener("click", () => openRollout(selectedRollout));
-byID("remote-detail-close").addEventListener("click", () => {
-  ++selectionVersion;
-  byID("remote-detail").hidden = true;
-  byID("remote-detail-metadata").textContent = "";
-  updateRefreshLabel();
-});
 byID("remote-refresh").addEventListener("click", async () => {
   const button = byID("remote-refresh");
   const status = byID("remote-status");
