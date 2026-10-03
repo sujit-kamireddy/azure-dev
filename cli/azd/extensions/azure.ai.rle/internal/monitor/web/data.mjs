@@ -432,6 +432,12 @@ export async function fetchSnapshot(fetcher = fetch, rolloutID = "") {
     throw new Error("Could not reach the local monitor. Check that the monitor command is still running, then try again.");
   }
   if (!result.ok) {
+    let detail;
+    try {
+      const body = await result.json();
+      if (typeof body?.error === "string") detail = body.error;
+    } catch { /* Older local handlers return plain text; keep the HTTP diagnostic. */ }
+    if (detail) throw new Error(`Could not load rollout: ${detail}`);
     throw new Error(`The local monitor returned HTTP ${result.status}. Check the monitor terminal, then try again.`);
   }
   try {
@@ -442,8 +448,17 @@ export async function fetchSnapshot(fetcher = fetch, rolloutID = "") {
 }
 
 // Returns null when the monitor serves a single saved rollout and has no set to browse.
-export async function fetchRolloutIndex(fetcher = fetch, after = "") {
-  const url = after ? `/api/rollouts?after=${encodeURIComponent(after)}` : "/api/rollouts";
+//
+// `watch`, when given, names the running rollouts on screen so a real-service
+// monitor refreshes their status sooner. An empty list says nothing is shown.
+export const WATCH_LIMIT = 50;
+
+export async function fetchRolloutIndex(fetcher = fetch, after = "", watch = null) {
+  const params = new URLSearchParams();
+  if (after) params.set("after", after);
+  if (Array.isArray(watch)) params.set("watch", watch.filter(Boolean).slice(0, WATCH_LIMIT).join(","));
+  const query = params.toString();
+  const url = query ? `/api/rollouts?${query}` : "/api/rollouts";
   let result;
   try {
     result = await fetcher(url, { credentials: "same-origin", cache: "no-store",
@@ -1098,7 +1113,7 @@ export function runFacts(overview) {  if (!isRecord(overview)) return { identity
       ["Started", meta.started_at],
     ]),
     model: rows([
-      ["Base model", model.model_name],
+      ["Base model", model.model_name ?? config.model_name],
       ["Renderer", model.renderer_name],
       ["Loom session", model.loom_session_id],
       ["Context window", isNumber(model.max_sequence_tokens)
@@ -1156,3 +1171,61 @@ export const fetchRunOverview = (fetcher = fetch) => fetchRun(fetcher, "/api/run
 export const fetchRunMetrics = (fetcher = fetch) => fetchRun(fetcher, "/api/run/metrics");
 export const fetchRunLog = (fetcher = fetch, offset = 0) =>
   fetchRun(fetcher, `/api/run/logs?offset=${encodeURIComponent(String(offset))}`);
+
+// Remote summaries carry status directly; never inspect result bodies for it.
+export function remoteRolloutState(entry) {
+  return ["running", "completed", "failed"].includes(entry?.status) ? entry.status : "unknown";
+}
+
+// A rollout whose result cannot be read is still shown as a rollout: what the
+// service knows about it, and why there is nothing more to open.
+export function unavailableRolloutMessage(entry) {
+  switch (remoteRolloutState(entry)) {
+    case "failed":
+      return "This rollout failed before producing a result, so there is no conversation or graph to show.";
+    case "running":
+      return "This rollout is still running. Its conversation and graph appear when it completes; use Refresh rollout to check again.";
+    case "completed":
+      return "This rollout completed, but its result was not retained or has expired.";
+    default:
+      return "The result for this rollout is not available.";
+  }
+}
+
+export function unavailableRolloutFacts(entry) {
+  const facts = [];
+  const add = (label, value) => {
+    if (value !== undefined && value !== null && value !== "") facts.push([label, String(value)]);
+  };
+  const state = remoteRolloutState(entry);
+  add("State", state === "unknown" ? entry?.status : state[0].toUpperCase() + state.slice(1));
+  add("Environment", entry?.environment_name
+    ? `${entry.environment_name}${entry.environment_version ? ` ${entry.environment_version}` : ""}` : "");
+  add("Checkpoint", entry?.checkpoint_id);
+  add("Latency", isNumber(entry?.latency_s) ? `${entry.latency_s.toFixed(1)}s` : "");
+  add("Reward", isNumber(entry?.reward) ? entry.reward.toFixed(3) : "");
+  add("Created", entry?.created_at_utc);
+  add("Session", entry?.session_id);
+  add("Job", entry?.job_id);
+  return facts;
+}
+
+export function remoteRunNotices(overview) {
+  const notes = [];
+  if (!overview?.run?.config) notes.push("Waiting for job registration; the job ID may not yet exist in this project.");
+  if (overview?.run?.meta?.status) notes.push(`Job status: ${overview.run.meta.status}.`);
+  for (const [name, state] of Object.entries(overview?.states ?? {})) {
+    if (state.error) {
+      notes.push(`${name}: ${state.error}${state.updated_at ? ` Last successful read: ${state.updated_at}.` : ""}`);
+    }
+  }
+  if (overview?.limited) {
+    notes.push("Showing a bounded history window (the latest 5,000 metric rows and 1,000 rollouts), not the full run.");
+  }
+  if (overview?.paused === "completed") {
+    notes.push("Automatic polling paused after completion. Refresh to check for later arrivals.");
+  } else if (overview?.paused) {
+    notes.push("Automatic polling stopped. Refresh to try again.");
+  }
+  return notes;
+}

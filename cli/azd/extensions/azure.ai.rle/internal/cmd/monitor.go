@@ -21,6 +21,7 @@ import (
 
 var runRolloutMonitor = monitor.Run
 var runJobMonitor = monitor.RunJob
+var runAPIJobMonitor = monitor.RunRemoteJob
 
 func newMonitorCommand() *cobra.Command {
 	var rolloutID string
@@ -40,11 +41,13 @@ Foundry project setting, local source folder, or running sandbox is required.
 If the rollout directory does not exist, the command warns and exits without
 opening a browser. Incomplete or corrupt artifacts still return an error.
 
-With --job-id, list the rollouts a training job recorded and open any one of
-them in the same dashboard. This reads the fine-tuning service, so it requires
-sign-in and an endpoint; --output-dir is not used. Rollout bodies are fetched
-only as they are opened. A run still in progress keeps recording, so the list
-keeps up with it: the page polls for what has landed since it last asked.
+With --job-id and the default Foundry-derived endpoint, read job config,
+metrics and rollout summaries from the RLE service into memory. No local run
+files are required. Graphs are fetched only when opened. Job status comes
+from the fine-tuning service. Sign-in and a Foundry project are required.
+
+With --endpoint or RLE_TRAIN_ENDPOINT, preserve facade rollout monitoring;
+--logs-root selects an optional local mirror from train --follow.
 
 The monitor stays running until Ctrl+C. Use --no-browser to open the printed
 link manually and enter the local access code.`,
@@ -101,7 +104,7 @@ link manually and enter the local access code.`,
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Fine-tuning endpoint that owns the job (used with --job-id).")
 	cmd.Flags().StringVar(&outputDir, "output-dir", defaultRolloutOutputDir, "Artifact root used by rollout --output-dir.")
 	cmd.Flags().StringVar(&logsRoot, "logs-root", "",
-		"Root that train --follow mirrored the run into, to show its metrics and log (used with --job-id).")
+		"Facade run mirror to read metrics and logs from (used with --job-id and an endpoint override).")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the dashboard link without opening a browser.")
 	return cmd
 }
@@ -149,6 +152,15 @@ func runMonitorForJob(
 	logsRoot string,
 	noBrowser bool,
 ) error {
+	realService := usesRealFinetuning(endpoint)
+	if realService {
+		if err := rejectRealMonitorFlags(cmd, "logs-root", "output-dir"); err != nil {
+			return err
+		}
+		if err := validateRleJobID(jobID); err != nil {
+			return err
+		}
+	}
 	// Only the fine-tuning endpoint matters here; skip the project lookup when it is given.
 	projectEndpoint := ""
 	if strings.TrimSpace(endpoint) == "" {
@@ -162,15 +174,62 @@ func runMonitorForJob(
 	if err != nil {
 		return err
 	}
-	client, err := newFinetuneClient(finetuneEndpoint)
+	client, err := createFinetuneClient(finetuneEndpoint)
 	if err != nil {
 		return err
+	}
+	if realService {
+		return runRealJobMonitor(ctx, cmd, projectEndpoint, client, jobID, noBrowser)
 	}
 	source := &jobRollouts{client: client, jobID: jobID}
 	return runJobMonitor(
 		ctx, source, source, jobID, resolveMonitorRunDir(logsRoot, jobID), noBrowser,
 		cmd.OutOrStdout(), cmd.ErrOrStderr(),
 	)
+}
+
+func validateRleJobID(jobID string) error {
+	if rleJobIDPattern.MatchString(jobID) {
+		return nil
+	}
+	return &azdext.LocalError{
+		Message: "job_id must start with ftjob- followed by 24 or 32 lowercase hexadecimal characters.",
+		Code:    "rle_invalid_job_id", Category: azdext.LocalErrorCategoryUser,
+		Suggestion: "Use the job ID returned by the real fine-tuning service.",
+	}
+}
+
+func rejectRealMonitorFlags(cmd *cobra.Command, flags ...string) error {
+	for _, name := range flags {
+		if flag := cmd.Flag(name); flag != nil && flag.Changed {
+			return &azdext.LocalError{
+				Message: fmt.Sprintf("--%s cannot be used with real-service API monitoring.", name),
+				Code:    "rle_monitor_conflicting_arguments", Category: azdext.LocalErrorCategoryUser,
+				Suggestion: "Remove the flag. Real-service monitoring always runs and does not stream or mirror files.",
+			}
+		}
+	}
+	return nil
+}
+
+func runRealJobMonitor(
+	ctx context.Context, cmd *cobra.Command, projectEndpoint string, client *finetuneClient, jobID string, noBrowser bool,
+) error {
+	project, err := projectRouteSegment(projectEndpoint)
+	if err != nil {
+		return err
+	}
+	rle, err := createRleClient(projectEndpoint)
+	if err != nil {
+		return err
+	}
+	// The monitor polls several endpoints at once, so both clients share one token cache.
+	credential := newCachedTokenCredential(rle.credential)
+	rle.credential = credential
+	monitorFT := *client
+	monitorFT.credential = credential
+	source := &rleJobSource{rle: rle, ft: &monitorFT, jobID: jobID, project: project}
+	return runAPIJobMonitor(ctx, source, jobID, noBrowser, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
 // resolveMonitorRunDir finds the local mirror of a job, if one was made.

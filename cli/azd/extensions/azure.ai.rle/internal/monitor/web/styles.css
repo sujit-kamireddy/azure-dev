@@ -23,6 +23,8 @@
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+/* The RLE service reports neither a split nor a task ID. */
+body.rle .col-split, body.rle .col-task { display: none; }
 body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 90% 0%, var(--glow), transparent 42%); }
 button, input, select { font: inherit; }
 button, summary, a { -webkit-tap-highlight-color: transparent; }

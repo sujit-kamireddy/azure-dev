@@ -302,6 +302,20 @@ test("polls from the last rollout it holds, so a poll costs only what is new", a
   assert.deepEqual(received.data, []);
 });
 
+test("names the running rollouts on screen, capped, and an empty list when none", async () => {
+  const many = Array.from({ length: 60 }, (_, index) => `r${index}`);
+  await fetchRolloutIndex(async (url) => {
+    const query = new URL(url, "http://x").searchParams;
+    assert.equal(query.get("after"), "last");
+    assert.deepEqual(query.get("watch").split(","), many.slice(0, 50));
+    return { ok: true, json: async () => ({ data: [] }) };
+  }, "last", many);
+  await fetchRolloutIndex(async (url) => {
+    assert.equal(url, "/api/rollouts?watch=");
+    return { ok: true, json: async () => ({ data: [] }) };
+  }, "", []);
+});
+
 test("a rollout id is escaped into the poll query rather than concatenated", async () => {
   await fetchRolloutIndex(async (url) => {
     assert.equal(url, "/api/rollouts?after=a%26b%3Dc");
