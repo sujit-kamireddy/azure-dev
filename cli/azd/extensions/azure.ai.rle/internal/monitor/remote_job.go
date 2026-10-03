@@ -36,6 +36,8 @@ const (
 	// The page names the rows it shows on every poll, so a list it stopped
 	// naming for this long is no longer on screen.
 	watchExpiry = 30 * time.Second
+	// A forced refresh answers when its cycle finishes, or after this long.
+	refreshWaitLimit = 45 * time.Second
 )
 
 // Reasons automatic polling stopped, reported to the page as "paused".
@@ -109,7 +111,7 @@ func (p *pageCursor) advance(token string, now time.Time) (bool, error) {
 type remoteJob struct {
 	source      JobSource
 	jobID       string
-	force       chan struct{}
+	force       chan chan struct{}
 	resultSlots chan struct{}
 
 	fetchMu sync.Mutex // Serializes refresh cycles.
@@ -146,7 +148,7 @@ type rolloutScan struct {
 func newRemoteJob(source JobSource, jobID string) *remoteJob {
 	return &remoteJob{
 		source: source, jobID: jobID,
-		force: make(chan struct{}, 1), resultSlots: make(chan struct{}, 4),
+		force: make(chan chan struct{}, 1), resultSlots: make(chan struct{}, 4),
 		metrics: map[int64]json.RawMessage{}, entries: map[string]JobRollout{}, readAt: map[string]time.Time{},
 		states:       map[string]pollState{},
 		metricCursor: newPageCursor(time.Minute),
@@ -166,8 +168,9 @@ func (j *remoteJob) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-j.force:
+		case done := <-j.force:
 			j.refresh(ctx, time.Now(), true)
+			close(done)
 		case <-ticker.C:
 			j.refresh(ctx, time.Now(), false)
 		}
@@ -541,11 +544,23 @@ func registerRemoteRoutes(mux *http.ServeMux, j *remoteJob) {
 		})
 	})
 	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
+		// Answer once the forced cycle has finished, so the page can show its
+		// result instead of a request that may still be queued.
+		ctx, cancel := context.WithTimeout(r.Context(), refreshWaitLimit)
+		defer cancel()
+		done := make(chan struct{})
 		select {
-		case j.force <- struct{}{}:
-		default:
+		case j.force <- done:
+		case <-ctx.Done():
+			w.WriteHeader(http.StatusAccepted)
+			return
 		}
-		w.WriteHeader(http.StatusAccepted)
+		select {
+		case <-done:
+			w.WriteHeader(http.StatusNoContent)
+		case <-ctx.Done():
+			w.WriteHeader(http.StatusAccepted)
+		}
 	})
 	mux.HandleFunc("GET /api/rollout", func(w http.ResponseWriter, r *http.Request) {
 		select {

@@ -1022,6 +1022,7 @@ async function openRollout(rolloutID) {
       byID("remote-detail-message").textContent =
         "The result is not available yet, was not retained, or has expired. Summary data remains available.";
       byID("remote-detail-metadata").textContent = JSON.stringify(snapshot.metadata, null, 2);
+      updateRefreshLabel();
       return;
     }
     setSnapshot(snapshot);
@@ -1030,6 +1031,7 @@ async function openRollout(rolloutID) {
     byID("run-overview").hidden = true;
     byID("run-log").hidden = true;
     byID("back-to-list").hidden = false;
+    updateRefreshLabel();
     byID("main").focus();
   } catch (error) {
     if (version !== selectionVersion) return;
@@ -1503,7 +1505,10 @@ async function refreshRunMetrics() {
 }
 
 async function pollRunView() {
-  if (!runOverview || !byID("snapshot").hidden) return;
+  if (!runOverview) return;
+  // The service banner stays current while a rollout is open; the charts wait.
+  const inSnapshot = !byID("snapshot").hidden;
+  if (inSnapshot && !realService()) return;
   try {
     const overview = await fetchRunOverview();
     if (overview && overview.run) runOverview = overview.run;
@@ -1512,6 +1517,7 @@ async function pollRunView() {
     if (realService()) showRemoteError(error);
     return;
   }
+  if (inSnapshot) return;
   await refreshRunMetrics();
   // Metrics are kept current whichever tab is up, so switching to the charts
   // shows the run as it is now rather than as it was when the tab was left.
@@ -1575,6 +1581,7 @@ byID("back-button").addEventListener("click", () => {
   byID("back-to-list").hidden = true;
   renderRolloutList();
   showRolloutList();
+  updateRefreshLabel();
 });
 byID("list-split").addEventListener("change", renderRolloutList);
 byID("list-step").addEventListener("change", renderRolloutList);
@@ -1590,20 +1597,58 @@ function showRemoteError(error) {
   byID("remote-status").textContent = `Showing previously loaded data. ${error.message}`;
 }
 
+function rolloutOpen() {
+  return Boolean(selectedRollout) && (!byID("snapshot").hidden || !byID("remote-detail").hidden);
+}
+
+function updateRefreshLabel() {
+  byID("remote-refresh").textContent = rolloutOpen() ? "Refresh rollout" : "Refresh service data";
+}
+
 byID("remote-detail-retry").addEventListener("click", () => openRollout(selectedRollout));
 byID("remote-detail-close").addEventListener("click", () => {
   ++selectionVersion;
   byID("remote-detail").hidden = true;
   byID("remote-detail-metadata").textContent = "";
+  updateRefreshLabel();
 });
 byID("remote-refresh").addEventListener("click", async () => {
   const button = byID("remote-refresh");
+  const status = byID("remote-status");
   button.disabled = true;
+  status.hidden = false;
+  // With a rollout open, refresh means that rollout: the job keeps polling on its own.
+  if (rolloutOpen()) {
+    status.textContent = "Refreshing rollout...";
+    try {
+      await openRollout(selectedRollout);
+      if (byID("load-error").hidden) {
+        status.textContent = `Rollout refreshed at ${new Date().toLocaleTimeString()}.`;
+      } else {
+        status.textContent = "Rollout refresh failed; showing previously loaded data.";
+      }
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  status.textContent = "Refreshing service data...";
   try {
     const response = await fetch("/api/refresh", { method: "POST", credentials: "same-origin" });
     if (!response.ok) throw new Error(`Refresh failed (HTTP ${response.status}).`);
-    byID("remote-status").hidden = false;
-    byID("remote-status").textContent = "Service refresh requested.";
+    // 202 means the cycle outlasted the wait; the regular polls pick it up.
+    const finished = response.status !== 202;
+    const overview = await fetchRunOverview();
+    if (overview && overview.run) runOverview = overview.run;
+    applyRemoteOverview(overview);
+    await refreshRunMetrics();
+    if (!byID("run-overview").hidden) renderRunView();
+    if (byID("snapshot").hidden) await pollForNewRollouts();
+    const note = finished
+      ? `Service data refreshed at ${new Date().toLocaleTimeString()}.`
+      : "Service refresh is still running; the page will update when it finishes.";
+    status.hidden = false;
+    status.textContent = status.textContent ? `${status.textContent} ${note}` : note;
   } catch (error) {
     showRemoteError(error);
   } finally {

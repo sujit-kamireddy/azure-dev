@@ -570,3 +570,40 @@ func TestRemoteConcurrentBrowserReads(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestRemoteRefreshAnswersAfterForcedCycle(t *testing.T) {
+	reader := newMemoryJobSource()
+	j := newRemoteJob(reader, remoteTestJob)
+	handler := http.NewServeMux()
+	registerRemoteRoutes(handler, j)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var refreshed sync.WaitGroup
+	refreshed.Go(func() {
+		done := <-j.force
+		j.refresh(ctx, time.Now(), true)
+		close(done)
+	})
+	response := remoteRequest(t, handler, "POST", "/api/refresh")
+	refreshed.Wait()
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("refresh must answer after its cycle: %d", response.Code)
+	}
+	if reader.listCalls == 0 || reader.metricCalls == 0 {
+		t.Fatalf("forced cycle did not read the service: list=%d metrics=%d", reader.listCalls, reader.metricCalls)
+	}
+}
+
+func TestRemoteRefreshGivesUpWhenRequestEnds(t *testing.T) {
+	j := newRemoteJob(newMemoryJobSource(), remoteTestJob)
+	handler := http.NewServeMux()
+	registerRemoteRoutes(handler, j)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequestWithContext(ctx, "POST", "http://"+testHost+"/api/refresh", nil)
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("an unfinished refresh must answer 202: %d", recorder.Code)
+	}
+}
