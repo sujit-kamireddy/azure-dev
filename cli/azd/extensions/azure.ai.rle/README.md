@@ -612,6 +612,8 @@ fine-tuning endpoint is normally derived from the same account as
 `https://<account>.openai.azure.com`. Set `RLE_TRAIN_ENDPOINT` to route `train`,
 `jobs`, and job monitoring to a facade or mock service instead. An explicit
 `--endpoint` still takes precedence.
+For development, set `RLE_ENV_OVERRIDE` to have `train` send its value in the
+`rleEnvOverride` request header, which pins the RLE environment the job runs against.
 A training file is required and must point to a regular local training dataset
 file. The extension uploads it to the selected fine-tuning resource with the
 `fine-tune` purpose, waits up to five minutes for the asynchronous file import

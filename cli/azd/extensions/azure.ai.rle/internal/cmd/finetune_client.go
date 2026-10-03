@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -189,6 +190,10 @@ func (c *finetuneClient) createJob(
 	headers := map[string]string{
 		"azureai-project":            azureAIProject,
 		"azureai-project-is-default": "true",
+	}
+	// Development aid: lets the team pin the RLE environment a job runs against.
+	if override := strings.TrimSpace(os.Getenv(rleEnvOverrideEnvVar)); override != "" {
+		headers[rleEnvOverrideHeader] = override
 	}
 	if err := c.do(ctx, http.MethodPost, finetuneJobsPath, headers, request, &result); err != nil {
 		return nil, err

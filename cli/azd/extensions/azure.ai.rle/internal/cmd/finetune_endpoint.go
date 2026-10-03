@@ -16,6 +16,13 @@ import (
 // Set it when an environment routes RLE jobs to a facade or mock service.
 const rleTrainEndpointEnvVar = "RLE_TRAIN_ENDPOINT"
 
+// RLE_ENV_OVERRIDE is a development aid. When set, train sends its value in the
+// rleEnvOverride header so the service runs the job against that RLE environment.
+const (
+	rleEnvOverrideEnvVar = "RLE_ENV_OVERRIDE"
+	rleEnvOverrideHeader = "rleEnvOverride"
+)
+
 func usesRealFinetuning(flagValue string) bool {
 	return strings.TrimSpace(flagValue) == "" && strings.TrimSpace(os.Getenv(rleTrainEndpointEnvVar)) == ""
 }

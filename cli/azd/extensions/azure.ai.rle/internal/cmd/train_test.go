@@ -243,6 +243,15 @@ func TestNormalizeFinetuneEndpointRejectsNonHTTPS(t *testing.T) {
 }
 
 func TestFinetuneClientSendsProjectHeadersAndAuthenticates(t *testing.T) {
+	for _, wantOverride := range []string{"", "math_rl:1.0.8"} {
+		t.Run("override="+wantOverride, func(t *testing.T) {
+			t.Setenv(rleEnvOverrideEnvVar, wantOverride)
+			testFinetuneClientHeaders(t, wantOverride)
+		})
+	}
+}
+
+func testFinetuneClientHeaders(t *testing.T, wantOverride string) {
 	credential := &testTokenCredential{}
 	client := newFinetuneClientWithCredential("https://resource.openai.azure.com", credential)
 	client.httpClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -260,6 +269,9 @@ func TestFinetuneClientSendsProjectHeadersAndAuthenticates(t *testing.T) {
 		}
 		if got := request.Header.Get("azureai-project-is-default"); got != "true" {
 			t.Fatalf("expected azureai-project-is-default=true, got %q", got)
+		}
+		if got := request.Header.Get(rleEnvOverrideHeader); got != wantOverride {
+			t.Fatalf("expected %s=%q, got %q", rleEnvOverrideHeader, wantOverride, got)
 		}
 		return &http.Response{
 			StatusCode: http.StatusCreated,
