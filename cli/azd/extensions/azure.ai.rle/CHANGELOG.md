@@ -1,5 +1,14 @@
 # Release History
 
+## 0.8.23-preview
+
+- `azd ai rle rollout` no longer accepts a caller-supplied agent input.
+  `--agent-input` and `--agent-input-file` are removed, and the Execute
+  Rollout request no longer carries an `agent_input` field: for Harness
+  targets, RLE now derives the agent-visible input server-side from the
+  sandbox's reset observation. Use `--task`/`--task-file` for the reset
+  payload; it is the only input a rollout takes.
+
 ## 0.8.16-preview
 
 - `azd ai rle rollout` now negotiates the v2 Execute Rollout WebSocket

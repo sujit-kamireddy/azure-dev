@@ -71,7 +71,7 @@ func TestReadJSONFlagOrFileRejectsInvalidJSON(t *testing.T) {
 }
 
 func TestReadJSONFlagOrFileDoesNotRepairWhenDisabled(t *testing.T) {
-	_, err := readJSONFlagOrFile("--agent-input", `{seed: 32, split: train}`, "--agent-input-file", "", false)
+	_, err := readJSONFlagOrFile("--task", `{seed: 32, split: train}`, "--task-file", "", false)
 	if err == nil {
 		t.Fatal("expected strict JSON parsing when PowerShell repair is disabled")
 	}
@@ -126,115 +126,6 @@ func TestRepairWindowsPowerShellJSONObject(t *testing.T) {
 func TestRepairWindowsPowerShellJSONObjectRejectsComplexValues(t *testing.T) {
 	if _, ok := repairWindowsPowerShellJSONObject([]byte(`{seed: [32]}`)); ok {
 		t.Fatal("expected complex JSON values to remain invalid")
-	}
-}
-
-func TestRolloutRunDefaultsAgentInputToTaskWhenUnset(t *testing.T) {
-	isolateRolloutArtifacts(t)
-	stubRolloutMonitor(t)
-	const task = `{"task_index":30,"split":"FineEnvs/data-agent-harbor-train"}`
-
-	rleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rawBody, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var request executeRolloutRequest
-		if err := json.Unmarshal(rawBody, &request); err != nil {
-			t.Fatal(err)
-		}
-		if string(request.Task) != task {
-			t.Fatalf("expected task to be forwarded unchanged, got %s", request.Task)
-		}
-		if string(request.AgentInput) != task {
-			t.Fatalf("expected agent input to default to task, got %s", request.AgentInput)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"rollout_id": "` + request.RolloutID + `",
-			"reward": 1,
-			"success": true,
-			"episode": {"kind": "gym", "termination_reason": "done", "steps": []}
-		}`))
-	}))
-	defer rleServer.Close()
-
-	loomServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == loomSessionsPath:
-			_, _ = w.Write([]byte(`{"session_id":"model_abc","request_id":"req-create"}`))
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/checkpoint_sample"):
-			_, _ = w.Write([]byte(`{"session_id":"model_abc","request_id":"req-checkpoint"}`))
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/complete"):
-			_, _ = w.Write([]byte(`{}`))
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/request/"):
-			_, _ = w.Write([]byte(`{"status":"completed"}`))
-		default:
-			t.Fatalf("unexpected Loom request: %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer loomServer.Close()
-
-	stubRleClientEndpoint(t, rleServer.URL)
-	oldCreateLoomSessionClient := createLoomSessionClient
-	createLoomSessionClient = func(endpoint string) (*loomSessionClient, error) {
-		return testLoomSessionClientForServer(t, loomServer.URL), nil
-	}
-	t.Cleanup(func() {
-		createLoomSessionClient = oldCreateLoomSessionClient
-	})
-
-	command := newRolloutCommand()
-	command.SetArgs([]string{
-		"code_rl", "--version", "1.0.0",
-		"--model", "Qwen/Qwen3-32B",
-		"--task", task,
-		"--output-dir", t.TempDir(),
-	})
-	var output bytes.Buffer
-	command.SetOut(&output)
-	command.SetErr(&output)
-
-	if err := command.Execute(); err != nil {
-		t.Fatalf("expected rollout to succeed, got %v", err)
-	}
-}
-
-func TestRolloutRejectsAgentInputForGymOpenEnv(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	schemaVersion := project.CurrentRleManifestSchemaVersion
-	if err := project.WriteRleConfig(dir, project.RleConfig{
-		SchemaVersion: &schemaVersion,
-		Rle: project.RleManifest{
-			Name:    "math_rl",
-			Version: "1.0.6",
-			Type:    project.RleTypeGym,
-			Subtype: project.RleSubtypeOpenEnv,
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	stubRleClientEndpoint(t, "https://rle.test")
-
-	command := newRolloutCommand()
-	command.SetArgs([]string{
-		"math_rl", "--version", "1.0.6",
-		"--model", "Qwen/Qwen3-32B",
-		"--task", `{"seed":0}`,
-		"--agent-input", `{"answer":"42"}`,
-	})
-	var output bytes.Buffer
-	command.SetOut(&output)
-	command.SetErr(&output)
-
-	err := command.Execute()
-	if err == nil {
-		t.Fatal("expected Gym/OpenEnv rollout to reject agent input")
-	}
-	if !strings.Contains(err.Error(), "--agent-input and --agent-input-file are not supported") {
-		t.Fatalf("expected Gym agent-input validation error, got %v", err)
 	}
 }
 
@@ -299,9 +190,6 @@ func TestRolloutFallsBackToRleConfigModelDefault(t *testing.T) {
 		}
 		if request.Policy == nil || request.Policy.ModelName != modelName {
 			t.Fatalf("expected model default from rle.toml to be forwarded, got %#v", request.Policy)
-		}
-		if request.AgentInput != nil {
-			t.Fatalf("expected Gym/OpenEnv request to omit agent input, got %s", request.AgentInput)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"rollout_id": "` + request.RolloutID + `", "reward": 1, "success": true}`))
@@ -382,6 +270,9 @@ func TestRolloutRunExecutesRolloutAndClosesLoomSession(t *testing.T) {
 		}
 		if _, retired := policy["loom_session_id"]; retired {
 			t.Fatal("the retired loom_session_id field must not be sent")
+		}
+		if _, retired := wire["agent_input"]; retired {
+			t.Fatal("the retired agent_input field must not be sent; RLE derives it from the reset observation")
 		}
 		// The CLI names no renderer, and a blank one is rejected rather than defaulted, so the
 		// whole object has to be absent rather than present and empty.

@@ -60,15 +60,15 @@ type rolloutSamplingOptions struct {
 
 // executeRolloutRequest mirrors vienna's ExecuteRolloutRequest
 // (EntryPoints/Models/ExecuteRolloutApiModels.cs). Task is the opaque JSONL record sent
-// unchanged to the sandbox reset operation (Gym/OpenEnv); AgentInput is the agent-visible
-// input required only by Harness targets.
+// unchanged to the sandbox reset operation; for Harness targets, RLE derives the
+// agent-visible input server-side from the reset observation rather than accepting it
+// from the caller.
 type executeRolloutRequest struct {
-	RolloutID  string                  `json:"rollout_id"`
-	JobID      string                  `json:"job_id,omitempty"`
-	Task       json.RawMessage         `json:"task,omitempty"`
-	AgentInput json.RawMessage         `json:"agent_input,omitempty"`
-	Policy     *rolloutPolicy          `json:"policy,omitempty"`
-	Sampling   *rolloutSamplingOptions `json:"sampling,omitempty"`
+	RolloutID string                  `json:"rollout_id"`
+	JobID     string                  `json:"job_id,omitempty"`
+	Task      json.RawMessage         `json:"task,omitempty"`
+	Policy    *rolloutPolicy          `json:"policy,omitempty"`
+	Sampling  *rolloutSamplingOptions `json:"sampling,omitempty"`
 }
 
 type executeRolloutResponse = rollouts.Response
