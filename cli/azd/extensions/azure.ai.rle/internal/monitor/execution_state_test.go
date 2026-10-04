@@ -15,7 +15,7 @@ import (
 
 func TestClassifyExecutionReportsCompletionForAGradedRollout(t *testing.T) {
 	state := classifyExecution(json.RawMessage(
-		`{"result":{"agent_response":"The competitor raised a Series B."},"rollout":{"turns":[{},{}]}}`))
+		`{"result":{"agent_response":"The competitor raised a Series B."},"rollout_graph":{"turns":[{},{}]}}`))
 	if state.State != executionCompleted {
 		t.Fatalf("state = %q, want %q", state.State, executionCompleted)
 	}
@@ -36,7 +36,7 @@ func TestClassifyExecutionReportsTheExceptionThatStoppedTheRollout(t *testing.T)
 		"  File \"pipeline.py\", line 330, in _create_with_retry\n" +
 		"openai.APITimeoutError: Request timed out."
 	state := classifyExecution(json.RawMessage(
-		`{"result":{"agent_response":` + mustQuote(traceback) + `},"rollout":{"turns":[{}]}}`))
+		`{"result":{"agent_response":` + mustQuote(traceback) + `},"rollout_graph":{"turns":[{}]}}`))
 	if state.State != executionFailed {
 		t.Fatalf("state = %q, want %q", state.State, executionFailed)
 	}
@@ -51,7 +51,7 @@ func TestClassifyExecutionReportsTheExceptionThatStoppedTheRollout(t *testing.T)
 }
 
 func TestClassifyExecutionReportsARolloutThatMadeNoModelCalls(t *testing.T) {
-	state := classifyExecution(json.RawMessage(`{"result":{"agent_response":"x"},"rollout":{"turns":[]}}`))
+	state := classifyExecution(json.RawMessage(`{"result":{"agent_response":"x"},"rollout_graph":{"turns":[]}}`))
 	if state.State != executionFailed || state.Error != "No model calls" {
 		t.Fatalf("state = %+v, want a failed no-model-calls state", state)
 	}
@@ -69,7 +69,7 @@ func TestClassifyExecutionHandlesAnExceptionThatCarriesNoMessage(t *testing.T) {
 		"    return await self._client.responses.create(**kwargs)\n" +
 		"httpx.ReadTimeout"
 	state := classifyExecution(json.RawMessage(
-		`{"result":{"agent_response":` + mustQuote(traceback) + `},"rollout":{"turns":[{},{},{},{},{},{},{}]}}`))
+		`{"result":{"agent_response":` + mustQuote(traceback) + `},"rollout_graph":{"turns":[{},{},{},{},{},{},{}]}}`))
 	if state.State != executionFailed {
 		t.Fatalf("state = %q, want %q", state.State, executionFailed)
 	}
@@ -110,9 +110,9 @@ func (r *countingReader) Get(_ context.Context, id string) (rollouts.Snapshot, e
 	if r.failOn[id] {
 		return rollouts.Snapshot{}, fmt.Errorf("unreachable")
 	}
-	body := `{"result":{"agent_response":"ok"},"rollout":{"turns":[{}]}}`
+	body := `{"result":{"agent_response":"ok"},"rollout_graph":{"turns":[{}]}}`
 	if id == "crashed" {
-		body = `{"result":{"agent_response":"ROLLOUT ERROR\nValueError: bad"},"rollout":{"turns":[{}]}}`
+		body = `{"result":{"agent_response":"ROLLOUT ERROR\nValueError: bad"},"rollout_graph":{"turns":[{}]}}`
 	}
 	return rollouts.Snapshot{Response: json.RawMessage(body)}, nil
 }

@@ -72,9 +72,9 @@ func classifyExecution(response json.RawMessage) executionState {
 		Result struct {
 			AgentResponse string `json:"agent_response"`
 		} `json:"result"`
-		Rollout struct {
+		RolloutGraph struct {
 			Turns []json.RawMessage `json:"turns"`
-		} `json:"rollout"`
+		} `json:"rollout_graph"`
 	}
 	// An unreadable body is not evidence the rollout failed, so it is left as
 	// completed rather than reported as a failure the run did not have.
@@ -85,7 +85,7 @@ func classifyExecution(response json.RawMessage) executionState {
 		kind, message := exceptionFromTraceback(body.Result.AgentResponse)
 		return executionState{State: executionFailed, Error: kind, Detail: message}
 	}
-	if body.Rollout.Turns != nil && len(body.Rollout.Turns) == 0 {
+	if body.RolloutGraph.Turns != nil && len(body.RolloutGraph.Turns) == 0 {
 		return executionState{
 			State:  executionFailed,
 			Error:  "No model calls",

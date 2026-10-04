@@ -131,7 +131,7 @@ func writeRolloutArtifacts(
 		}
 		export.ProjectEndpoint = endpoint
 	}
-	export.HasGraph = len(response.Rollout) > 0 && string(response.Rollout) != "null"
+	export.HasGraph = len(response.RolloutGraph) > 0 && string(response.RolloutGraph) != "null"
 	root, err := filepath.Abs(filepath.Join(outputDir, id))
 	if err != nil {
 		return nil, fmt.Errorf("resolve rollout output directory: %w", err)
@@ -153,9 +153,9 @@ func writeRolloutArtifacts(
 	artifacts = &rolloutArtifacts{Dir: root}
 
 	var graph capturedGraph
-	if len(response.Rollout) > 0 {
+	if len(response.RolloutGraph) > 0 {
 		// Preserve malformed graphs verbatim; only derived views are skipped.
-		_ = json.Unmarshal(response.Rollout, &graph)
+		_ = json.Unmarshal(response.RolloutGraph, &graph)
 	}
 
 	summary := rolloutSummary{
@@ -211,7 +211,7 @@ func writeRolloutArtifacts(
 			root,
 			"rollout.json",
 			"the full capture graph exactly as the service returned it",
-			response.Rollout,
+			response.RolloutGraph,
 		); err != nil {
 			return nil, err
 		}

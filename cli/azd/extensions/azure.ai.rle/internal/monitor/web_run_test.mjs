@@ -409,7 +409,7 @@ test("a low reward alone is not an execution failure", () => {
   const status = executionStatus({
     success: false,
     reward: 0.0568,
-    rollout: { turns: [{ index: 0 }] },
+    rollout_graph: { turns: [{ index: 0 }] },
     result: { agent_response: "The competitor's filing does not disclose segment revenue." },
   });
   assert.equal(status.state, "completed");
@@ -417,7 +417,7 @@ test("a low reward alone is not an execution failure", () => {
 });
 
 test("a rollout with no turns is an execution failure", () => {
-  const status = executionStatus({ success: false, rollout: { turns: [] }, result: {} });
+  const status = executionStatus({ success: false, rollout_graph: { turns: [] }, result: {} });
   assert.equal(status.state, "failed");
   assert.equal(status.error, "No model calls");
 });
