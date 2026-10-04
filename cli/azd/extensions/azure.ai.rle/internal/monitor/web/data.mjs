@@ -105,17 +105,17 @@ export function mapSnapshot(snapshot) {
     );
   }
   optional(response, "episode", isRecord, "response");
-  optional(response, "rollout", isRecord, "response");
+  optional(response, "rollout_graph", isRecord, "response");
   const episode = response.episode ?? {};
-  const graph = response.rollout ?? {};
+  const graph = response.rollout_graph ?? {};
   validateFields(episode, { kind: isString, termination_reason: isString, ungraded: isBoolean }, "episode");
   validateFields(graph, { capture_level: isString, trainable: isBoolean, stats: isRecord,
-    sequences: Array.isArray, validation: Array.isArray }, "rollout");
+    sequences: Array.isArray, validation: Array.isArray }, "rollout_graph");
   const stats = graph.stats ?? {};
   for (const key of ["n_turns", "n_roots", "n_forks", "n_discarded", "n_sequences",
-    "n_trainable_sequences", "n_trainable_tokens"]) optional(stats, key, isCount, "rollout.stats");
+    "n_trainable_sequences", "n_trainable_tokens"]) optional(stats, key, isCount, "rollout_graph.stats");
   const steps = records(episode.steps, "episode.steps");
-  const turns = records(graph.turns, "rollout.turns");
+  const turns = records(graph.turns, "rollout_graph.turns");
   steps?.forEach((step, index) => validateFields(step,
     { capture_node_id: isString, reward: isNumber, episode_done: isBoolean }, `episode.steps[${index}]`));
   turns?.forEach((turn, index) => validateFields(turn, {
@@ -206,7 +206,7 @@ export function executionStatus(response) {
     const failure = exceptionFromTraceback(agentResponse);
     return { state: "failed", error: failure?.type ?? null, detail: failure?.message ?? null };
   }
-  const turns = response?.rollout?.turns;
+  const turns = response?.rollout_graph?.turns;
   if (Array.isArray(turns) && turns.length === 0) {
     return { state: "failed", error: "No model calls", detail: "The rollout recorded no turns." };
   }

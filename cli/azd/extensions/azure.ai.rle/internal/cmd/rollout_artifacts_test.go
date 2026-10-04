@@ -45,7 +45,7 @@ const realGymRolloutGraph = `{
 func testGymResponse() *executeRolloutResponse {
 	return &executeRolloutResponse{
 		RolloutID:     "4f53e172018b9d7f74825dc348e42386",
-		Rollout:       json.RawMessage(realGymRolloutGraph),
+		RolloutGraph:  json.RawMessage(realGymRolloutGraph),
 		FinalResponse: new("Final answer"),
 		Reward:        1,
 		Success:       new(false),
@@ -202,7 +202,7 @@ func TestWriteRolloutArtifactsToleratesAnUnusableGraph(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := testGymResponse()
-			response.Rollout = rollout
+			response.RolloutGraph = rollout
 
 			artifacts, err := writeRolloutArtifacts(t.TempDir(), response, nil)
 			if err != nil {
@@ -280,7 +280,7 @@ func TestPrintRolloutArtifactsRendersATreeWithSizesAndPurposes(t *testing.T) {
 // capture unless the description says which it is.
 func TestPrintRolloutArtifactsDistinguishesAnEvalCapture(t *testing.T) {
 	response := testGymResponse()
-	response.Rollout = json.RawMessage(`{
+	response.RolloutGraph = json.RawMessage(`{
 	  "sequences": [{"role": "agent", "n_turns": 2, "prompt_len": 10, "n_trainable": 0,
 	                 "input_ids": [], "loss_mask": [], "logprobs": [], "trainable": false}],
 	  "capture_level": "text", "rollout_type": "eval", "trainable": false
@@ -367,7 +367,7 @@ func TestArtifactsPreserveOptionalFieldsAndPrecision(t *testing.T) {
 			raw := []byte(`{"rollout_id":"` + monitorTestID + `","reward":0.12345678901234567890` + verdict + `,
 						"episode":{"kind":"gym_openenv","steps":[],"ungraded":true,"future_annotation":9007199254740993},
 						"result":{"exact":9007199254740993},
-						"rollout":{"turns":[],"unknown":9007199254740993,"precise":0.12345678901234567890}}`)
+						"rollout_graph":{"turns":[],"unknown":9007199254740993,"precise":0.12345678901234567890}}`)
 			var response executeRolloutResponse
 			if err := json.Unmarshal(raw, &response); err != nil {
 				t.Fatal(err)

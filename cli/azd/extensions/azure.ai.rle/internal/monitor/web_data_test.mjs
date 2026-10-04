@@ -75,7 +75,7 @@ test("preserves missing collections and stats, including explicit empty collecti
   assert.equal(missing.steps, null);
   assert.equal(missing.turns, null);
   assert.equal(missing.stats.n_turns, undefined);
-  const empty = mapSnapshot(snapshot({ episode: { steps: [] }, rollout: { turns: [], stats: { n_turns: 0 } } }));
+  const empty = mapSnapshot(snapshot({ episode: { steps: [] }, rollout_graph: { turns: [], stats: { n_turns: 0 } } }));
   assert.deepEqual(empty.steps, []);
   assert.deepEqual(empty.turns, []);
   assert.equal(empty.stats.n_turns, 0);
@@ -87,7 +87,7 @@ test("preserves signed rewards, repeated capture IDs, and many-to-many joins", (
       { capture_node_id: "a", reward: 2 }, { capture_node_id: "a", reward: -0.5 },
       { capture_node_id: "b", reward: 0 },
     ] },
-    rollout: { turns: [{ node_id: "a", index: 0 }, { node_id: "a", index: 4 }, { node_id: "other" }] },
+    rollout_graph: { turns: [{ node_id: "a", index: 0 }, { node_id: "a", index: 4 }, { node_id: "other" }] },
   }));
   assert.deepEqual(model.steps.map((step) => step.reward), [2, -0.5, 0]);
   assert.deepEqual(model.steps.map((step) => step.turnPositions), [[0, 1], [0, 1], []]);
@@ -104,7 +104,7 @@ test("missing rewards remain unknown without affecting other steps", () => {
 test("one-step snapshots retain their exact result and raw graph data", () => {
   const input = snapshot({ result: { content: "<script>alert('not markup')</script>" },
     episode: { steps: [{ reward: -1, episode_done: true }] },
-    rollout: { capture_level: "tokens", turns: [{ n_prompt: 0, n_tools: 5 }], validation: [] } });
+    rollout_graph: { capture_level: "tokens", turns: [{ n_prompt: 0, n_tools: 5 }], validation: [] } });
   const before = JSON.stringify(input);
   const model = mapSnapshot(input);
   assert.equal(model.response, input.response);
@@ -117,7 +117,7 @@ test("one-step snapshots retain their exact result and raw graph data", () => {
 
 test("token counts are exposed only at tokens capture level", () => {
   for (const level of [undefined, "full", "metadata", "tokens"]) {
-    const model = mapSnapshot(snapshot({ rollout: { capture_level: level, turns: [{ n_prompt: 12, n_sampled: 4 }] } }));
+    const model = mapSnapshot(snapshot({ rollout_graph: { capture_level: level, turns: [{ n_prompt: 12, n_sampled: 4 }] } }));
     assert.equal(model.turns[0].prompt, level === "tokens" ? 12 : null);
     assert.equal(model.turns[0].sampled, level === "tokens" ? 4 : null);
   }
@@ -126,7 +126,7 @@ test("token counts are exposed only at tokens capture level", () => {
 test("maps final response and captured model conversation without changing the response", () => {
   const input = snapshot({
     final_response: "<think>Private reasoning</think>\nThe final answer",
-    rollout: { turns: [
+    rollout_graph: { turns: [
       {
         request_messages: [{ role: "system", content: "Instructions" }, { role: "user", content: "Question" }],
         response_message: {
@@ -148,7 +148,7 @@ test("maps final response and captured model conversation without changing the r
   assert.equal(model.finalResponseReasoningHidden, true);
   assert.equal(model.finalResponseExpandable, true);
   assert.equal(model.hasConversation, true);
-  assert.deepEqual(model.turns[0].requestMessages, input.response.rollout.turns[0].request_messages);
+  assert.deepEqual(model.turns[0].requestMessages, input.response.rollout_graph.turns[0].request_messages);
   assert.equal(model.turns[1].responseMessage.content, "Answer");
   assert.deepEqual(model.turns[0].flow, ["system", "user", "assistant"]);
   assert.deepEqual(model.turns[1].flow, ["tool", "assistant"]);
@@ -176,12 +176,12 @@ test("malformed responses fail explicitly instead of rendering fabricated values
     null, {}, { ...snapshot(), saved_at: "yesterday" }, { ...snapshot(), source: null },
     snapshot({ rollout_id: "" }), snapshot({ reward: "0.5" }), snapshot({ reward: Infinity }),
     snapshot({ success: null }), snapshot({ success: "false" }), snapshot({ final_response: 42 }),
-    snapshot({ rollout: [] }),
+    snapshot({ rollout_graph: [] }),
     snapshot({ episode: { steps: [null] } }), snapshot({ episode: { steps: [{ reward: "1" }] } }),
-    snapshot({ rollout: { turns: [{ n_tools: -1 }] } }), snapshot({ rollout: { validation: {} } }),
-    snapshot({ rollout: { turns: [{ request_messages: [null] }] } }),
-    snapshot({ rollout: { turns: [{ response_message: "answer" }] } }),
-    snapshot({ rollout: { stats: { n_turns: 1.2 } } }),
+    snapshot({ rollout_graph: { turns: [{ n_tools: -1 }] } }), snapshot({ rollout_graph: { validation: {} } }),
+    snapshot({ rollout_graph: { turns: [{ request_messages: [null] }] } }),
+    snapshot({ rollout_graph: { turns: [{ response_message: "answer" }] } }),
+    snapshot({ rollout_graph: { stats: { n_turns: 1.2 } } }),
   ];
   for (const input of invalid) assert.throws(() => mapSnapshot(input), /Invalid snapshot/);
 });

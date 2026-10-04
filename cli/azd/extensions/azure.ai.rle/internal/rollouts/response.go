@@ -14,7 +14,7 @@ import (
 // Response describes the fields used by the CLI; Raw retains the complete service response.
 type Response struct {
 	RolloutID     string          `json:"rollout_id"`
-	Rollout       json.RawMessage `json:"rollout"`
+	RolloutGraph  json.RawMessage `json:"rollout_graph"`
 	FinalResponse *string         `json:"final_response,omitempty"`
 	Reward        float64         `json:"reward"`
 	Success       *bool           `json:"success,omitempty"`
