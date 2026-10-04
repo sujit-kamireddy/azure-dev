@@ -27,18 +27,16 @@ import (
 
 // rolloutFlags holds the CLI-facing configuration for one rollout.
 type rolloutFlags struct {
-	version        string
-	model          string
-	loraRank       int
-	task           string
-	taskFile       string
-	agentInput     string
-	agentInputFile string
-	rolloutID      string
-	renderer       string
-	sequenceID     int
-	timeout        int
-	outputDir      string
+	version    string
+	model      string
+	loraRank   int
+	task       string
+	taskFile   string
+	rolloutID  string
+	renderer   string
+	sequenceID int
+	timeout    int
+	outputDir  string
 }
 
 type rolloutAction struct {
@@ -73,9 +71,9 @@ func newRolloutCommand() *cobra.Command {
 
 rollout provisions everything a Loom-backed rollout needs and tears it down again: it
 creates a real Loom training session for --model, saves a sampler checkpoint, calls RLE's
-Execute Rollout API with your task (and, for Harness targets, agent input), prints the
-live execution milestones followed by the resulting reward and trajectory summary, then
-closes the Loom session. You never handle Loom session or checkpoint identifiers directly.
+Execute Rollout API with your task, prints the live execution milestones followed by the
+resulting reward and trajectory summary, then closes the Loom session. You never handle
+Loom session or checkpoint identifiers directly.
 
 The response also carries the full capture graph — token ids, logprobs and loss masks —
 which is too large to print and cannot be fetched again once the rollout returns. It is
@@ -109,18 +107,6 @@ rle.toml. To run an environment without local source, provide both its name and
 	cmd.Flags().IntVar(&flags.loraRank, "lora-rank", flags.loraRank, "LoRA adapter rank for the Loom session.")
 	cmd.Flags().StringVar(&flags.task, "task", "", "Inline JSON task payload for the sandbox reset operation.")
 	cmd.Flags().StringVar(&flags.taskFile, "task-file", "", "Path to a JSON file with the task payload.")
-	cmd.Flags().StringVar(
-		&flags.agentInput,
-		"agent-input",
-		"",
-		"Inline JSON agent input (Harness targets only). Defaults to --task/--task-file when omitted.",
-	)
-	cmd.Flags().StringVar(
-		&flags.agentInputFile,
-		"agent-input-file",
-		"",
-		"Path to a JSON file with the agent input (Harness targets only).",
-	)
 	cmd.Flags().StringVar(
 		&flags.rolloutID,
 		"rollout-id",
@@ -188,24 +174,6 @@ func (a *rolloutAction) Run() error {
 	if err != nil {
 		return err
 	}
-	agentInput, err := readJSONFlagOrFile(
-		"--agent-input", a.flags.agentInput, "--agent-input-file", a.flags.agentInputFile, false,
-	)
-	if err != nil {
-		return err
-	}
-	if target.isGymOpenEnv {
-		if agentInput != nil {
-			return &azdext.LocalError{
-				Message:    "--agent-input and --agent-input-file are not supported for Gym/OpenEnv rollouts.",
-				Code:       "rle_rollout_gym_agent_input_not_supported",
-				Category:   azdext.LocalErrorCategoryUser,
-				Suggestion: "Use --task or --task-file to set the Gym/OpenEnv reset payload.",
-			}
-		}
-	} else if agentInput == nil {
-		agentInput = task
-	}
 
 	rolloutID := strings.TrimSpace(a.flags.rolloutID)
 	if a.cmd.Flags().Changed("rollout-id") && rolloutID == "" {
@@ -223,7 +191,7 @@ func (a *rolloutAction) Run() error {
 	ctx, stopSignals := signal.NotifyContext(a.cmd.Context(), os.Interrupt)
 	defer stopSignals()
 
-	if err := a.executeAndSave(ctx, target, rle, model, task, agentInput, rolloutID); err != nil {
+	if err := a.executeAndSave(ctx, target, rle, model, task, rolloutID); err != nil {
 		return err
 	}
 	if a.monitor {
@@ -238,7 +206,7 @@ func (a *rolloutAction) executeAndSave(
 	target rolloutTarget,
 	rle *rleClient,
 	model string,
-	task, agentInput json.RawMessage,
+	task json.RawMessage,
 	rolloutID string,
 ) (err error) {
 	loom, err := createLoomSessionClient(target.projectEndpoint)
@@ -299,9 +267,8 @@ func (a *rolloutAction) executeAndSave(
 	}
 	progress := newExecuteRolloutProgressRenderer(out)
 	response, err := rle.executeRollout(ctx, target.environmentName, target.version, loomToken, executeRolloutRequest{
-		RolloutID:  rolloutID,
-		Task:       task,
-		AgentInput: agentInput,
+		RolloutID: rolloutID,
+		Task:      task,
 		Policy: &rolloutPolicy{
 			Type:            loomPolicyType,
 			ModelName:       model,

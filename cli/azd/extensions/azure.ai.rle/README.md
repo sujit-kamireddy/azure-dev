@@ -481,13 +481,12 @@ azd ai rle rollout code_rl --version 1.0.0 --model Qwen/Qwen3-32B --task-file ta
 `rollout` provisions everything a rollout needs and tears it down again: it
 creates a real Loom training session for the model (from `--model`, falling
 back to rle.toml's `defaults.model.name`), saves a sampler checkpoint, calls
-RLE's Execute Rollout API with your `--task` (and, for Harness targets,
-`--agent-input`), prints the resulting reward and trajectory summary, then
-closes the Loom session — you never handle Loom session or checkpoint
-identifiers directly. Use `--task`/`--task-file` for the sandbox reset payload
-(Gym/OpenEnv), `--agent-input`/`--agent-input-file` for Harness targets. When
-`--agent-input`/`--agent-input-file` is omitted, the task payload is reused as
-the agent input.
+RLE's Execute Rollout API with your `--task`, prints the resulting reward and
+trajectory summary, then closes the Loom session — you never handle Loom
+session or checkpoint identifiers directly. Use `--task`/`--task-file` for the
+sandbox reset payload; it is the only input a rollout takes. For Harness
+targets, RLE derives the agent-visible input server-side from the reset
+observation — there is no caller-supplied agent input to set.
 `--lora-rank` (default `16`), `--rollout-id` (default: a generated GUID),
 `--sequence-id` (default `0`, only meaningful when correlating a rollout to a
 specific training step in a real training loop), and `--timeout` (default
