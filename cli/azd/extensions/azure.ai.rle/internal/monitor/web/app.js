@@ -227,6 +227,7 @@ function renderConversation() {
       `Model call ${turn.position + 1}`,
       `${turn.requestMessages.length} request message${turn.requestMessages.length === 1 ? "" : "s"}`,
       turn.raw.finish_reason ? `Finish: ${turn.raw.finish_reason}` : null,
+      turn.toolCallErrorCount ? `Tool call error${turn.toolCallErrorCount === 1 ? "" : "s"}: ${turn.toolCallErrorCount}` : null,
     ].filter(Boolean);
     details.append(element("summary", summaryParts.join(" · ")));
     const body = element("div", undefined, "conversation-body");
@@ -299,6 +300,14 @@ function renderGraph(focusKey = null) {
       group.setAttribute("aria-label", `${group.getAttribute("aria-label")}, called ${node.tools.join(", ")}`);
     }
     group.append(detailNode);
+    if (node.toolCallErrorCount) {
+      const badge = svgElement("circle", { cx: 201, cy: 23, r: 10, class: "node-error-badge" });
+      badge.append(svgElement("title", {}, `${node.toolCallErrorCount} tool call error${node.toolCallErrorCount === 1 ? "" : "s"}`));
+      group.append(badge);
+      group.append(svgElement("text", { x: 201, y: 23, class: "node-error-count" }, String(node.toolCallErrorCount)));
+      group.setAttribute("aria-label",
+        `${group.getAttribute("aria-label")}, ${node.toolCallErrorCount} tool call error${node.toolCallErrorCount === 1 ? "" : "s"}`);
+    }
     const call = node.records.length === 1 ? node.records[0].raw : null;
     const tokenCounts = model.tokensCaptured && call
       ? [present(call.n_prompt) ? `${count(call.n_prompt)} prompt` : null,
@@ -343,7 +352,7 @@ function selectGraphNode(key) {
       ["Prompt tokens", format(model.tokensCaptured ? raw.n_prompt : null)],
       ["Sampled tokens", format(model.tokensCaptured ? raw.n_sampled : null)],
       ["Finish reason", raw.finish_reason ?? "Not reported"], ["Discarded", raw.discarded],
-      ["Available tools (not calls)", raw.n_tools]]);
+      ["Available tools (not calls)", raw.n_tools], ["Tool call errors", raw.n_tool_call_errors]]);
     const calls = toolCalls(raw.response_message);
     if (calls.length) {
       const details = element("details", undefined, "detail-section");
@@ -361,6 +370,19 @@ function selectGraphNode(key) {
         }
         if (present(parsed)) json(details, parsed);
         else details.append(element("p", "No arguments reported.", "muted"));
+      }
+      inspector.append(details);
+    }
+    if (Array.isArray(raw.tool_call_errors) && raw.tool_call_errors.length) {
+      const details = element("details", undefined, "detail-section");
+      details.append(element("summary", `Tool call errors (${raw.tool_call_errors.length})`));
+      for (const error of raw.tool_call_errors) {
+        const heading = element("p", undefined, "tool-call-heading");
+        heading.append(element("code", error.error_code ?? "unknown", "tool-name"));
+        details.append(heading);
+        details.append(element("p", error.error || "No error message reported.", "muted"));
+        details.append(present(error.raw_text) ? element("pre", String(error.raw_text))
+          : element("p", "No raw text reported.", "muted"));
       }
       inspector.append(details);
     }
@@ -699,7 +721,29 @@ function renderDetails() {
   byID("validation-panel").hidden = !model.graph.validation?.length;
   byID("validation-count").textContent = model.graph.validation?.length ? `(${model.graph.validation.length})` : "";
   lazyJSON(byID("validation"), model.graph.validation);
+  renderModelCallErrors();
   lazyJSON(byID("raw-content"), model.response);
+}
+
+// Model call errors never become turns, so they have no node in the rollout
+// graph to attach to; this panel is the only place the raw detail is listed.
+function renderModelCallErrors() {
+  byID("model-call-errors-panel").hidden = !model.modelCallErrors.length;
+  byID("model-call-errors-count").textContent = model.modelCallErrors.length ? `(${model.modelCallErrors.length})` : "";
+  const container = byID("model-call-errors");
+  container.replaceChildren();
+  for (const error of model.modelCallErrors.slice(0, 100)) {
+    const row = element("p", undefined, "linked-step");
+    const label = [error.error_code ?? "Error",
+      present(error.index) ? `near call ${error.index + 1}` : null,
+      present(error.status_code) ? `(HTTP ${error.status_code})` : null].filter(Boolean).join(" ");
+    row.append(element("strong", label), document.createTextNode(error.message ? `: ${error.message}` : ""));
+    container.append(row);
+  }
+  if (model.modelCallErrors.length > 100) {
+    container.append(element("p",
+      `Showing 100 of ${model.modelCallErrors.length} model call errors. All errors are in Rollout Stats → Response JSON.`, "muted"));
+  }
 }
 
 // Transport-independent replacement: reset selections and pages, never reuse previous snapshot details.
@@ -766,6 +810,7 @@ export function setSnapshot(snapshot) {
   metric("Episode steps", model.steps?.length);
   metric("Model calls", model.turns?.length);
   metric("Captured sequences", model.graph.sequences?.length);
+  metric("Model call errors", model.modelCallErrors.length);
   renderActivitySummary();
   const episodeParts = [];
   if (model.episode.kind) episodeParts.push(model.episode.kind);
