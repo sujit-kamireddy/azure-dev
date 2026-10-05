@@ -472,16 +472,101 @@ func TestNormalizeRleConfigRestrictsTheEnvironmentProtocol(t *testing.T) {
 		assertLocalErrorCode(t, err, "rle_manifest_environment_protocol_invalid")
 	})
 
-	t.Run("gym may not carry it", func(t *testing.T) {
-		_, err := NormalizeRleConfig(RleConfig{Rle: RleManifest{
+	t.Run("gym openenv may carry it", func(t *testing.T) {
+		config, err := NormalizeRleConfig(RleConfig{Rle: RleManifest{
 			Name:                "code_rl",
 			Version:             "2.0.0",
 			Type:                RleTypeGym,
 			Subtype:             RleSubtypeOpenEnv,
 			EnvironmentProtocol: new(RleEnvironmentProtocolMcpEnvironment),
 		}})
-		assertLocalErrorCode(t, err, "rle_manifest_environment_protocol_invalid")
+		if err != nil {
+			t.Fatalf("Gym/OpenEnv must support MCP, got %v", err)
+		}
+		if config.Rle.EnvironmentProtocol == nil ||
+			*config.Rle.EnvironmentProtocol != RleEnvironmentProtocolMcpEnvironment {
+			t.Fatal("Gym/OpenEnv protocol was dropped")
+		}
 	})
+}
+
+func TestLoadRleConfigTopLevelEnvironmentProtocol(t *testing.T) {
+	for _, sample := range []string{"math_rl", "code_rl"} {
+		t.Run(sample, func(t *testing.T) {
+			dir := t.TempDir()
+			content := `schema_version = "1.0.0"
+environment_protocol = "  MCP_Environment  "
+
+[rle]
+name = "` + sample + `"
+version = "1.0.0"
+type = "Gym"
+subtype = "OpenEnv"
+
+[defaults.reinforcement]
+max_episode_steps = 4
+`
+			if err := os.WriteFile(filepath.Join(dir, RleConfigFile), []byte(content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			config, err := LoadRleConfig(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if config.Rle.EnvironmentProtocol == nil ||
+				*config.Rle.EnvironmentProtocol != RleEnvironmentProtocolMcpEnvironment {
+				t.Fatal("top-level MCP protocol was dropped")
+			}
+			if config.EnvironmentProtocol != nil {
+				t.Fatal("normalized protocol must have only one canonical location")
+			}
+			if err := WriteRleConfig(dir, config); err != nil {
+				t.Fatal(err)
+			}
+			reloaded, err := LoadRleConfig(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.Rle.EnvironmentProtocol == nil ||
+				*reloaded.Rle.EnvironmentProtocol != RleEnvironmentProtocolMcpEnvironment {
+				t.Fatal("top-level protocol did not survive a canonical write")
+			}
+		})
+	}
+}
+
+func TestNormalizeRleConfigValidatesBothProtocolLocations(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		top    RleEnvironmentProtocol
+		nested RleEnvironmentProtocol
+		valid  bool
+	}{
+		{"matching aliases", "mcp_environment", " MCP_Environment ", true},
+		{"invalid top-level", "legacy", "mcp_environment", false},
+		{"invalid nested", "mcp_environment", "legacy", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config, err := NormalizeRleConfig(RleConfig{
+				EnvironmentProtocol: new(test.top),
+				Rle: RleManifest{
+					Name: "code_rl", Version: "1.0.0", Type: RleTypeGym, Subtype: RleSubtypeOpenEnv,
+					EnvironmentProtocol: new(test.nested),
+				},
+			})
+			if !test.valid {
+				assertLocalErrorCode(t, err, "rle_manifest_environment_protocol_invalid")
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if config.Rle.EnvironmentProtocol == nil ||
+				*config.Rle.EnvironmentProtocol != RleEnvironmentProtocolMcpEnvironment {
+				t.Fatal("matching MCP aliases were dropped")
+			}
+		})
+	}
 }
 
 func assertLocalErrorCode(t *testing.T, err error, wantCode string) {

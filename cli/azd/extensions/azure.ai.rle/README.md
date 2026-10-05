@@ -196,7 +196,8 @@ without credentials, a query string, or a fragment.
 
 ### Environment protocol
 
-A harness declares how RLE should drive it during a rollout:
+An environment declares how RLE should drive it during a rollout. MCP is supported
+for Gym/OpenEnv and Harness/HostedAgent or Harness/BYOH environments:
 
 ```toml
 [rle]
@@ -209,7 +210,25 @@ agentVersion = "12"
 environmentProtocol = "mcp_environment"
 ```
 
-`mcp_environment` is the only value. Omit the field to publish a harness on the
+SDK Gym samples may declare the same protocol at the manifest root:
+
+```toml
+schema_version = "1.0.0"
+environment_protocol = "mcp_environment"
+
+[rle]
+name = "math_rl"
+version = "1.0.0"
+type = "Gym"
+subtype = "OpenEnv"
+```
+
+The CLI accepts either spelling and preserves the protocol when rewriting a
+manifest. If both are supplied, they must agree. MCP Gym samples submit their
+final response using `GradeAction.answer`, rather than a schema-driven
+`defaults.gym_openenv.model_response_field`.
+
+`mcp_environment` is the only value. Omit the field to publish an environment on the
 legacy protocol; that is what an absent value means to the service, which is why
 there is no name for it.
 

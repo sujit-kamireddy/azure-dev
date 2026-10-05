@@ -88,6 +88,11 @@ Error precedence: ServiceError → LocalError → azcore.ResponseError → gRPC 
 
 First-party extensions live in `cli/azd/extensions/` and are registered in `cli/azd/extensions/registry.json`.
 
+The RLE extension uses an immutable manifest protocol selection to publish MCP
+environments for Gym/OpenEnv as well as Harness/HostedAgent and Harness/BYOH.
+This environment protocol is separate from the extension's `mcp-server`
+capability. See the [RLE manifest contract](../../cli/azd/extensions/azure.ai.rle/README.md#environment-protocol).
+
 ## Detailed Reference
 
 - [Extension Framework Guide](../../cli/azd/docs/extensions/extension-framework.md) — Getting started

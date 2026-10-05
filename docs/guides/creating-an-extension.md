@@ -85,6 +85,13 @@ For extensions that are still in development or preview, consider publishing to 
 
 ## Extension Design Guidelines
 
+When accepting alternate manifest field spellings, validate every supplied value
+and normalize them to one canonical representation before rewriting or publishing.
+For example, the [RLE environment protocol](../../cli/azd/extensions/azure.ai.rle/README.md#environment-protocol)
+accepts top-level `environment_protocol` from SDK samples alongside
+`rle.environmentProtocol`, preserves MCP for Gym and Harness, and verifies the
+service response rather than silently publishing a legacy environment.
+
 - **Extend existing command categories** — Use verb-first structure (e.g., `azd add <resource>`)
 - **Reuse parameter patterns** — Use established flags like `--subscription`, `--name`, `--type`
 - **Integrate with help** — Make your extension discoverable through `azd help`
