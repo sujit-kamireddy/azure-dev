@@ -8,6 +8,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -277,6 +279,47 @@ func TestVerifyPublishedEnvironmentRejectsADowngradedProtocol(t *testing.T) {
 	published.EnvironmentProtocol = new(project.RleEnvironmentProtocolMcpEnvironment)
 	if err := verifyPublishedEnvironment(config, published); err != nil {
 		t.Fatalf("a matching protocol must verify, got %v", err)
+	}
+}
+
+func TestPublishTopLevelMcpGymManifest(t *testing.T) {
+	dir := t.TempDir()
+	content := `environment_protocol = "mcp_environment"
+
+[rle]
+name = "math_rl"
+version = "1.0.0"
+type = "Gym"
+subtype = "OpenEnv"
+`
+	if err := os.WriteFile(filepath.Join(dir, project.RleConfigFile), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := project.LoadRleConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(buildEnvironmentCreateRequest(config, "registry.azurecr.io/math:1.0.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent["environment_protocol"] != "mcp_environment" || sent["type"] != "Gym" || sent["subtype"] != "OpenEnv" {
+		t.Fatalf("MCP Gym manifest did not reach the publish request: %s", body)
+	}
+	published := &environmentResource{
+		Name: "math_rl", Version: "1.0.0", Type: "Gym", Subtype: "OpenEnv",
+		EnvironmentProtocol: new(project.RleEnvironmentProtocolMcpEnvironment),
+	}
+	if err := verifyPublishedEnvironment(config, published); err != nil {
+		t.Fatal(err)
+	}
+	published.EnvironmentProtocol = nil
+	if err := verifyPublishedEnvironment(config, published); err == nil {
+		t.Fatal("publishing MCP Gym as legacy must not report success")
 	}
 }
 
