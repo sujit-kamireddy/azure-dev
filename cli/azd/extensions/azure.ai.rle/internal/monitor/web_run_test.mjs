@@ -422,6 +422,17 @@ test("a rollout with no turns is an execution failure", () => {
   assert.equal(status.error, "No model calls");
 });
 
+test("falls back to the legacy rollout field when rollout_graph is absent", () => {
+  const legacy = executionStatus({ success: false, rollout: { turns: [] }, result: {} });
+  assert.equal(legacy.state, "failed");
+  assert.equal(legacy.error, "No model calls");
+  // rollout_graph wins when a response somehow carries both.
+  const both = executionStatus({
+    success: false, rollout_graph: { turns: [{ index: 0 }] }, rollout: { turns: [] }, result: {},
+  });
+  assert.equal(both.state, "completed");
+});
+
 test("an exception with no message reports only its type", () => {
   const status = executionStatus({
     result: { agent_response: "ROLLOUT ERROR\nTraceback (most recent call last):\nhttpx.ReadTimeout" },

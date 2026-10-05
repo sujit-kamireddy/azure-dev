@@ -81,6 +81,18 @@ test("preserves missing collections and stats, including explicit empty collecti
   assert.equal(empty.stats.n_turns, 0);
 });
 
+test("falls back to the legacy rollout field when rollout_graph is absent", () => {
+  const legacy = mapSnapshot(snapshot({ rollout: { turns: [{ node_id: "a" }], stats: { n_turns: 1 } } }));
+  assert.deepEqual(legacy.turns.map((turn) => turn.raw.node_id), ["a"]);
+  assert.equal(legacy.stats.n_turns, 1);
+  // rollout_graph wins when a response somehow carries both.
+  const both = mapSnapshot(snapshot({
+    rollout_graph: { turns: [{ node_id: "b" }] },
+    rollout: { turns: [{ node_id: "a" }] },
+  }));
+  assert.deepEqual(both.turns.map((turn) => turn.raw.node_id), ["b"]);
+});
+
 test("preserves signed rewards, repeated capture IDs, and many-to-many joins", () => {
   const model = mapSnapshot(snapshot({
     episode: { steps: [

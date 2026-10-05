@@ -75,6 +75,11 @@ func classifyExecution(response json.RawMessage) executionState {
 		RolloutGraph struct {
 			Turns []json.RawMessage `json:"turns"`
 		} `json:"rollout_graph"`
+		// RolloutGraphLegacy supports RLE services that have not yet picked up
+		// the rollout -> rollout_graph rename.
+		RolloutGraphLegacy struct {
+			Turns []json.RawMessage `json:"turns"`
+		} `json:"rollout"`
 	}
 	// An unreadable body is not evidence the rollout failed, so it is left as
 	// completed rather than reported as a failure the run did not have.
@@ -85,7 +90,11 @@ func classifyExecution(response json.RawMessage) executionState {
 		kind, message := exceptionFromTraceback(body.Result.AgentResponse)
 		return executionState{State: executionFailed, Error: kind, Detail: message}
 	}
-	if body.RolloutGraph.Turns != nil && len(body.RolloutGraph.Turns) == 0 {
+	turns := body.RolloutGraph.Turns
+	if turns == nil {
+		turns = body.RolloutGraphLegacy.Turns
+	}
+	if turns != nil && len(turns) == 0 {
 		return executionState{
 			State:  executionFailed,
 			Error:  "No model calls",

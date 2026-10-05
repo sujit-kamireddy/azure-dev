@@ -57,6 +57,26 @@ func TestClassifyExecutionReportsARolloutThatMadeNoModelCalls(t *testing.T) {
 	}
 }
 
+// Some RLE services have not yet picked up the rollout -> rollout_graph
+// rename; classification must agree either way.
+func TestClassifyExecutionAcceptsTheLegacyRolloutField(t *testing.T) {
+	state := classifyExecution(json.RawMessage(`{"result":{"agent_response":"x"},"rollout":{"turns":[]}}`))
+	if state.State != executionFailed || state.Error != "No model calls" {
+		t.Fatalf("state = %+v, want a failed no-model-calls state", state)
+	}
+	completed := classifyExecution(json.RawMessage(
+		`{"result":{"agent_response":"x"},"rollout":{"turns":[{},{}]}}`))
+	if completed.State != executionCompleted {
+		t.Fatalf("state = %q, want %q", completed.State, executionCompleted)
+	}
+	// rollout_graph wins when a response somehow carries both.
+	both := classifyExecution(json.RawMessage(
+		`{"result":{"agent_response":"x"},"rollout_graph":{"turns":[{}]},"rollout":{"turns":[]}}`))
+	if both.State != executionCompleted {
+		t.Fatalf("state = %q, want %q (rollout_graph should win)", both.State, executionCompleted)
+	}
+}
+
 // Taken from rollout aea89e72e3fd441b9efe10f1aacaf7e8 of ftjob-f0c92de8, which
 // is the case this column exists for: it crashed 7 turns in, and the index
 // recorded it with reward 0.057, has_graph=true and an unremarkable 138s

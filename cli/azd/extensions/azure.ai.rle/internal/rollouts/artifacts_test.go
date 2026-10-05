@@ -176,3 +176,30 @@ func TestResponsePreservesOptionalVerdict(t *testing.T) {
 		}
 	}
 }
+
+// Some RLE services have not yet picked up the rollout -> rollout_graph
+// rename; the response must still populate RolloutGraph either way, and
+// RolloutGraph must win when a response somehow carries both.
+func TestResponseFoldsTheLegacyRolloutFieldIntoRolloutGraph(t *testing.T) {
+	legacy := json.RawMessage(`{"rollout_id":"` + testID + `","reward":1,"rollout":{"turns":[{}]}}`)
+	response, err := decodeResponse(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(response.RolloutGraph) != `{"turns":[{}]}` {
+		t.Fatalf("RolloutGraph = %s, want the legacy rollout payload", response.RolloutGraph)
+	}
+	if response.RolloutGraphLegacy != nil {
+		t.Fatal("RolloutGraphLegacy should be cleared once folded into RolloutGraph")
+	}
+
+	both := json.RawMessage(`{"rollout_id":"` + testID +
+		`","reward":1,"rollout_graph":{"turns":[{},{}]},"rollout":{"turns":[{}]}}`)
+	response, err = decodeResponse(both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(response.RolloutGraph) != `{"turns":[{},{}]}` {
+		t.Fatalf("RolloutGraph = %s, want rollout_graph to win", response.RolloutGraph)
+	}
+}

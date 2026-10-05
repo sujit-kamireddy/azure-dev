@@ -106,8 +106,11 @@ export function mapSnapshot(snapshot) {
   }
   optional(response, "episode", isRecord, "response");
   optional(response, "rollout_graph", isRecord, "response");
+  optional(response, "rollout", isRecord, "response");
   const episode = response.episode ?? {};
-  const graph = response.rollout_graph ?? {};
+  // Some RLE services have not yet picked up the rollout -> rollout_graph
+  // rename; rollout_graph wins when a response somehow carries both.
+  const graph = response.rollout_graph ?? response.rollout ?? {};
   validateFields(episode, { kind: isString, termination_reason: isString, ungraded: isBoolean }, "episode");
   validateFields(graph, { capture_level: isString, trainable: isBoolean, stats: isRecord,
     sequences: Array.isArray, validation: Array.isArray }, "rollout_graph");
@@ -206,7 +209,7 @@ export function executionStatus(response) {
     const failure = exceptionFromTraceback(agentResponse);
     return { state: "failed", error: failure?.type ?? null, detail: failure?.message ?? null };
   }
-  const turns = response?.rollout_graph?.turns;
+  const turns = response?.rollout_graph?.turns ?? response?.rollout?.turns;
   if (Array.isArray(turns) && turns.length === 0) {
     return { state: "failed", error: "No model calls", detail: "The rollout recorded no turns." };
   }
