@@ -58,8 +58,7 @@ func TestTrainAndMonitorUseTheSameAPIBackendRegardlessOfEndpoint(t *testing.T) {
 			oldStream := followTrainingRunFunc
 			t.Cleanup(func() { followTrainingRunFunc = oldStream })
 			followTrainingRunFunc = func(context.Context, string, string, string, string, io.Writer) (string, error) {
-				t.Fatal("train without --follow must not stream run artifacts")
-				return "", nil
+				return "succeeded", nil
 			}
 			if err := action.Run(); err != nil {
 				t.Fatal(err)
@@ -231,15 +230,28 @@ func TestMonitorErrorKeepsCorrelationIDs(t *testing.T) {
 }
 
 func TestRealMonitorFailureDoesNotResubmit(t *testing.T) {
-	action, _ := stubbedTrain(t, t.Context(), &rleTrainFlags{})
+	action, output := stubbedTrain(t, t.Context(), &rleTrainFlags{noBrowser: true})
 	stubAPIJobMonitor(t)
 	calls := 0
 	runAPIJobMonitor = func(context.Context, monitor.JobSource, string, bool, io.Writer, io.Writer) error {
 		calls++
 		return errors.New("listener unavailable")
 	}
-	err := action.Run()
-	if err == nil || !strings.Contains(err.Error(), "was accepted") || calls != 1 {
-		t.Fatalf("%v", err)
+	originalFollow := followTrainingRunFunc
+	followTrainingRunFunc = func(context.Context, string, string, string, string, io.Writer) (string, error) {
+		return "succeeded", nil
+	}
+	t.Cleanup(func() { followTrainingRunFunc = originalFollow })
+
+	// A dashboard that fails to start is reported, not fatal: the job was
+	// already accepted and is running on the service regardless.
+	if err := action.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("job monitor started %d times, want 1", calls)
+	}
+	if !strings.Contains(output.String(), "The job monitor did not start: listener unavailable") {
+		t.Fatalf("output = %q, want the monitor failure reported", output.String())
 	}
 }

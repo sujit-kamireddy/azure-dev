@@ -1,5 +1,19 @@
 # Release History
 
+## 0.8.24-preview
+
+- `azd ai rle train` no longer requires `--follow` to mirror a run's logs and
+  metrics locally and open its job monitor: both now happen by default, the
+  same way `rollout` already opens a dashboard by default. Pass `--no-follow`
+  to skip both, submit the job, and exit immediately; the command always
+  prints `azd ai rle monitor --job-id <id>` so the job stays reopenable either
+  way.
+
+- In the job monitor's rollout list, the first (sequence) column is no longer
+  blank for rollouts from the real fine-tuning service, which does not report
+  a sampler sequence id: it now falls back to the rollout's position in the
+  list.
+
 ## 0.8.23-preview
 
 - `azd ai rle train` and `azd ai rle monitor --job-id` now read jobs submitted

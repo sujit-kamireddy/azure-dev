@@ -47,10 +47,10 @@ func Run(
 // The run may still be going, so the list is not read once: jobIndex re-lists
 // from where it stopped, and the page polls for what has landed since.
 //
-// runDir is the local mirror `train --follow` writes (empty when there is
-// none). When present the dashboard also shows what the job is -- its model,
-// environment, hyperparameters, metrics and log -- instead of only the rollouts
-// it has produced so far.
+// runDir is the local mirror `train` writes by default (empty when it was
+// skipped with --no-follow). When present the dashboard also shows what the
+// job is -- its model, environment, hyperparameters, metrics and log --
+// instead of only the rollouts it has produced so far.
 func RunJob(
 	ctx context.Context,
 	reader rollouts.Reader,

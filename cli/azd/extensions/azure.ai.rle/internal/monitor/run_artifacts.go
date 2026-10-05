@@ -36,8 +36,8 @@ const (
 	maxRunLogBytes      = 256 << 10 // log bytes returned per request
 )
 
-// runArtifacts reads the run files that `train --follow` mirrors into
-// <logs root>/rle-harness/<job id>.
+// runArtifacts reads the run files that `train` mirrors by default into
+// <logs root>/rle-harness/<job id> (skipped entirely with --no-follow).
 //
 // Every read goes to disk. The run is usually still going, so the answer to
 // "what does this job look like now" changes between requests, and a cache
