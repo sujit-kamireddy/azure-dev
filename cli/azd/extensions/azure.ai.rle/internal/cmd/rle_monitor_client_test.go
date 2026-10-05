@@ -32,82 +32,49 @@ func stubAPIJobMonitor(t *testing.T) {
 	}
 }
 
-func TestRealTrainAndStandaloneUseSameMonitor(t *testing.T) {
-	action, _ := stubbedTrain(t, t.Context(), &rleTrainFlags{noBrowser: true})
-	t.Setenv(rleTrainEndpointEnvVar, "")
-	stubAPIJobMonitor(t)
-	calls := 0
-	runAPIJobMonitor = func(
-		ctx context.Context, source monitor.JobSource, id string, noBrowser bool, out, errOut io.Writer,
-	) error {
-		calls++
-		s, ok := source.(*rleJobSource)
-		if !ok || id != realMonitorJobID || !noBrowser || s.jobID != id ||
-			s.project != "project" || s.rle.baseUrl != "https://account.services.ai.azure.com/api/projects/project" {
-			t.Fatalf("unexpected monitor source: %#v", source)
-		}
-		return nil
-	}
-	oldStream := followTrainingRunFunc
-	t.Cleanup(func() { followTrainingRunFunc = oldStream })
-	followTrainingRunFunc = func(context.Context, string, string, string, string, io.Writer) (string, error) {
-		t.Fatal("real train must not stream facade artifacts")
-		return "", nil
-	}
-	if err := action.Run(); err != nil {
-		t.Fatal(err)
-	}
-	command := newMonitorCommand()
-	command.SetOut(io.Discard)
-	command.SetErr(io.Discard)
-	command.SetArgs([]string{"--job-id", realMonitorJobID, "--no-browser"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if calls != 2 {
-		t.Fatalf("monitor started %d times, want 2", calls)
-	}
-}
-
-func TestRealTrainRejectsFacadeFlagsBeforeSubmission(t *testing.T) {
-	for _, flag := range []string{"follow", "logs-root"} {
-		t.Run(flag, func(t *testing.T) {
-			action, _ := stubbedTrain(t, t.Context(), &rleTrainFlags{})
-			t.Setenv(rleTrainEndpointEnvVar, "")
-			value := "false"
-			if flag == "logs-root" {
-				value = t.TempDir()
+// TestTrainAndMonitorUseTheSameAPIBackendRegardlessOfEndpoint is the regression
+// test for the single unified mode: train's own post-submission monitor and a
+// separate `azd ai rle monitor --job-id` both read Config/Metrics/Rollouts from
+// the real RLE service, whether or not RLE_TRAIN_ENDPOINT/--endpoint is set.
+// Only job creation and status ever go through a facade endpoint.
+func TestTrainAndMonitorUseTheSameAPIBackendRegardlessOfEndpoint(t *testing.T) {
+	for _, env := range []string{"", "https://facade.example.com"} {
+		t.Run("env="+env, func(t *testing.T) {
+			action, _ := stubbedTrain(t, t.Context(), &rleTrainFlags{noBrowser: true})
+			t.Setenv(rleTrainEndpointEnvVar, env)
+			stubAPIJobMonitor(t)
+			calls := 0
+			runAPIJobMonitor = func(
+				ctx context.Context, source monitor.JobSource, id string, noBrowser bool, out, errOut io.Writer,
+			) error {
+				calls++
+				s, ok := source.(*rleJobSource)
+				if !ok || id != realMonitorJobID || !noBrowser || s.jobID != id ||
+					s.project != "project" || s.rle.baseUrl != "https://account.services.ai.azure.com/api/projects/project" {
+					t.Fatalf("unexpected monitor source: %#v", source)
+				}
+				return nil
 			}
-			if err := action.cmd.Flags().Set(flag, value); err != nil {
+			oldStream := followTrainingRunFunc
+			t.Cleanup(func() { followTrainingRunFunc = oldStream })
+			followTrainingRunFunc = func(context.Context, string, string, string, string, io.Writer) (string, error) {
+				t.Fatal("train without --follow must not stream run artifacts")
+				return "", nil
+			}
+			if err := action.Run(); err != nil {
 				t.Fatal(err)
 			}
-			old := createFinetuneClient
-			t.Cleanup(func() { createFinetuneClient = old })
-			createFinetuneClient = func(string) (*finetuneClient, error) {
-				t.Fatal("conflict must fail before client construction/upload")
-				return nil, nil
+			command := newMonitorCommand()
+			command.SetOut(io.Discard)
+			command.SetErr(io.Discard)
+			command.SetArgs([]string{"--job-id", realMonitorJobID, "--no-browser"})
+			if err := command.Execute(); err != nil {
+				t.Fatal(err)
 			}
-			err := action.Run()
-			if err == nil || !strings.Contains(err.Error(), "--"+flag) {
-				t.Fatalf("got %v", err)
+			if calls != 2 {
+				t.Fatalf("monitor started %d times, want 2", calls)
 			}
 		})
-	}
-}
-
-func TestRealMonitorBackendSelection(t *testing.T) {
-	for _, tc := range []struct {
-		flag, env string
-		want      bool
-	}{
-		{"", "", true}, {"", " \t", true}, {"", "https://facade.example.com", false},
-		{"https://account.openai.azure.com", "", false},
-		{"https://other.example.com", "https://facade.example.com", false},
-	} {
-		t.Setenv(rleTrainEndpointEnvVar, tc.env)
-		if got := usesRealFinetuning(tc.flag); got != tc.want {
-			t.Fatalf("%+v: %t", tc, got)
-		}
 	}
 }
 
@@ -265,7 +232,6 @@ func TestMonitorErrorKeepsCorrelationIDs(t *testing.T) {
 
 func TestRealMonitorFailureDoesNotResubmit(t *testing.T) {
 	action, _ := stubbedTrain(t, t.Context(), &rleTrainFlags{})
-	t.Setenv(rleTrainEndpointEnvVar, "")
 	stubAPIJobMonitor(t)
 	calls := 0
 	runAPIJobMonitor = func(context.Context, monitor.JobSource, string, bool, io.Writer, io.Writer) error {

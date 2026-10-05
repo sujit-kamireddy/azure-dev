@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"azure.ai.rle/internal/monitor"
 	"azure.ai.rle/internal/project"
-	"azure.ai.rle/internal/rollouts"
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 )
 
@@ -551,32 +551,6 @@ func stubbedTrain(t *testing.T, ctx context.Context, flags *rleTrainFlags) (*tra
 	return &trainAction{cmd: command, flags: flags}, output
 }
 
-// Without --follow the command exits, so there is no dashboard to serve. The
-// rollout ids a run generates are not knowable ahead of time, so the job id is
-// the only way back to them and has to be offered.
-func TestTrainNamesTheMonitorCommandWhenItIsNotFollowing(t *testing.T) {
-	action, output := stubbedTrain(t, context.Background(), &rleTrainFlags{})
-	if err := action.Run(); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), "azd ai rle monitor --job-id "+realMonitorJobID) {
-		t.Fatalf("output = %q, want the command that opens this run's rollouts", output.String())
-	}
-}
-
-// An endpoint the run needed is an endpoint the monitor needs, so a pasted
-// command has to carry it.
-func TestTrainCarriesTheEndpointIntoTheMonitorCommand(t *testing.T) {
-	action, output := stubbedTrain(t, context.Background(),
-		&rleTrainFlags{endpoint: "https://account.openai.azure.com"})
-	if err := action.Run(); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), "--job-id "+realMonitorJobID+" --endpoint https://account.openai.azure.com") {
-		t.Fatalf("output = %q, want the endpoint carried into the monitor command", output.String())
-	}
-}
-
 // The point of following a run is watching its rollouts land, so the dashboard
 // runs alongside the stream rather than after it, and outlives it: the run
 // ending is when the rollouts are finally all there to read.
@@ -585,18 +559,14 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	defer cancel()
 
 	started := make(chan string, 1)
-	monitored := make(chan string, 1)
-	originalMonitor := runJobMonitor
-	runJobMonitor = func(
-		ctx context.Context, _ rollouts.Reader, _ rollouts.Lister,
-		jobID string, runDir string, _ bool, _, _ io.Writer,
+	stubAPIJobMonitor(t)
+	runAPIJobMonitor = func(
+		ctx context.Context, _ monitor.JobSource, jobID string, _ bool, _, _ io.Writer,
 	) error {
 		started <- jobID
-		monitored <- runDir
 		<-ctx.Done()
 		return nil
 	}
-	t.Cleanup(func() { runJobMonitor = originalMonitor })
 
 	streamed := make(chan struct{})
 	originalFollow := followTrainingRunFunc
@@ -622,12 +592,6 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("--follow did not start the job monitor")
-	}
-
-	// The dashboard must read the same directory the stream writes, or it would
-	// show a run with no metrics while they are being downloaded beside it.
-	if runDir := <-monitored; runDir != filepath.Join(logsRoot, "rle-harness", realMonitorJobID) {
-		t.Fatalf("dashboard read %q, want the run mirror --follow writes", runDir)
 	}
 
 	<-streamed

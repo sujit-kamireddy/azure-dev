@@ -20,7 +20,6 @@ import (
 )
 
 var runRolloutMonitor = monitor.Run
-var runJobMonitor = monitor.RunJob
 var runAPIJobMonitor = monitor.RunRemoteJob
 
 func newMonitorCommand() *cobra.Command {
@@ -29,7 +28,6 @@ func newMonitorCommand() *cobra.Command {
 	var endpoint string
 	var noBrowser bool
 	var outputDir string
-	var logsRoot string
 	cmd := &cobra.Command{
 		Use:   "monitor (--rollout-id <id> | --job-id <id>)",
 		Short: "Open a local dashboard for a saved rollout or a training job's rollouts",
@@ -41,13 +39,11 @@ Foundry project setting, local source folder, or running sandbox is required.
 If the rollout directory does not exist, the command warns and exits without
 opening a browser. Incomplete or corrupt artifacts still return an error.
 
-With --job-id and the default Foundry-derived endpoint, read job config,
-metrics and rollout summaries from the RLE service into memory. No local run
-files are required. Graphs are fetched only when opened. Job status comes
-from the fine-tuning service. Sign-in and a Foundry project are required.
-
-With --endpoint or RLE_TRAIN_ENDPOINT, preserve facade rollout monitoring;
---logs-root selects an optional local mirror from train --follow.
+With --job-id, always read config, metrics, logs and rollouts directly from the
+RLE service into memory: no local run files are required, and graphs are
+fetched only when opened. --endpoint or RLE_TRAIN_ENDPOINT only changes where
+job status is read from (see azd ai rle train --help); Sign-in and a Foundry
+project are required either way.
 
 The monitor stays running until Ctrl+C. Use --no-browser to open the printed
 link manually and enter the local access code.`,
@@ -77,7 +73,7 @@ link manually and enter the local access code.`,
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			defer stop()
 			if jobID != "" {
-				return runMonitorForJob(ctx, cmd, jobID, endpoint, logsRoot, noBrowser)
+				return runMonitorForJob(ctx, cmd, jobID, endpoint, noBrowser)
 			}
 			if err := rollouts.ValidateID(rolloutID); err != nil {
 				return invalidMonitorIDError(err)
@@ -103,45 +99,8 @@ link manually and enter the local access code.`,
 	cmd.Flags().StringVar(&jobID, "job-id", "", "ID of a training job whose recorded rollouts to browse.")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Fine-tuning endpoint that owns the job (used with --job-id).")
 	cmd.Flags().StringVar(&outputDir, "output-dir", defaultRolloutOutputDir, "Artifact root used by rollout --output-dir.")
-	cmd.Flags().StringVar(&logsRoot, "logs-root", "",
-		"Facade run mirror to read metrics and logs from (used with --job-id and an endpoint override).")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the dashboard link without opening a browser.")
 	return cmd
-}
-
-// jobRollouts adapts the fine-tuning client to the dashboard's reader and lister.
-//
-// The service returns rollouts in the dashboard's own snapshot shape, so a
-// recorded training rollout renders through exactly the same path as a local one.
-type jobRollouts struct {
-	client *finetuneClient
-	jobID  string
-}
-
-func (j *jobRollouts) Get(ctx context.Context, rolloutID string) (rollouts.Snapshot, error) {
-	snapshot, err := j.client.getJobRollout(ctx, j.jobID, rolloutID)
-	if err != nil {
-		return rollouts.Snapshot{}, err
-	}
-	return *snapshot, nil
-}
-
-// List follows the service's paging so the dashboard sees the whole run, not its first page.
-// It starts after the given rollout, so a poll costs only the rollouts that are new.
-func (j *jobRollouts) List(ctx context.Context, after string) ([]rollouts.Entry, error) {
-	const pageSize = 500
-	var all []rollouts.Entry
-	for {
-		page, err := j.client.listJobRollouts(ctx, j.jobID, "", after, pageSize)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, page.Data...)
-		if !page.HasMore || len(page.Data) == 0 {
-			return all, nil
-		}
-		after = page.Data[len(page.Data)-1].RolloutID
-	}
 }
 
 func runMonitorForJob(
@@ -149,26 +108,17 @@ func runMonitorForJob(
 	cmd *cobra.Command,
 	jobID string,
 	endpoint string,
-	logsRoot string,
 	noBrowser bool,
 ) error {
-	realService := usesRealFinetuning(endpoint)
-	if realService {
-		if err := rejectRealMonitorFlags(cmd, "logs-root", "output-dir"); err != nil {
-			return err
-		}
-		if err := validateRleJobID(jobID); err != nil {
-			return err
-		}
+	if err := rejectRealMonitorFlags(cmd, "output-dir"); err != nil {
+		return err
 	}
-	// Only the fine-tuning endpoint matters here; skip the project lookup when it is given.
-	projectEndpoint := ""
-	if strings.TrimSpace(endpoint) == "" {
-		resolved, err := resolveJobsProjectEndpoint()
-		if err != nil {
-			return err
-		}
-		projectEndpoint = resolved
+	if err := validateRleJobID(jobID); err != nil {
+		return err
+	}
+	projectEndpoint, err := resolveJobsProjectEndpoint()
+	if err != nil {
+		return err
 	}
 	finetuneEndpoint, err := resolveFinetuneEndpoint(endpoint, projectEndpoint)
 	if err != nil {
@@ -178,14 +128,7 @@ func runMonitorForJob(
 	if err != nil {
 		return err
 	}
-	if realService {
-		return runRealJobMonitor(ctx, cmd, projectEndpoint, client, jobID, noBrowser)
-	}
-	source := &jobRollouts{client: client, jobID: jobID}
-	return runJobMonitor(
-		ctx, source, source, jobID, resolveMonitorRunDir(logsRoot, jobID), noBrowser,
-		cmd.OutOrStdout(), cmd.ErrOrStderr(),
-	)
+	return runRealJobMonitor(ctx, cmd, projectEndpoint, client, jobID, noBrowser)
 }
 
 func validateRleJobID(jobID string) error {
@@ -230,24 +173,6 @@ func runRealJobMonitor(
 	monitorFT.credential = credential
 	source := &rleJobSource{rle: rle, ft: &monitorFT, jobID: jobID, project: project}
 	return runAPIJobMonitor(ctx, source, jobID, noBrowser, cmd.OutOrStdout(), cmd.ErrOrStderr())
-}
-
-// resolveMonitorRunDir finds the local mirror of a job, if one was made.
-//
-// Monitoring a job does not require having followed it -- the rollouts come
-// from the service either way -- so an absent mirror is not an error. It means
-// only that this machine has no metrics or log for the run, and the dashboard
-// shows the rollouts alone.
-func resolveMonitorRunDir(logsRoot string, jobID string) string {
-	root := strings.TrimSpace(logsRoot)
-	if root == "" {
-		root = defaultLogsRoot()
-	}
-	directory := runMirrorDir(root, jobID)
-	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
-		return ""
-	}
-	return directory
 }
 
 func resolveRolloutOutputDir(directory string) (string, error) {
