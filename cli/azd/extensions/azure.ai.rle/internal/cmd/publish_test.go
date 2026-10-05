@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"azure.ai.rle/internal/project"
@@ -202,6 +203,80 @@ func TestVerifyPublishedEnvironmentRequiresManifestDefaults(t *testing.T) {
 	var localErr *azdext.LocalError
 	if !errors.As(err, &localErr) || localErr.Code != "rle_published_environment_mismatch" {
 		t.Fatalf("expected published defaults mismatch, got %v", err)
+	}
+}
+
+func TestPublishRequestSendsTheEnvironmentProtocolUnderItsWireName(t *testing.T) {
+	config := project.RleConfig{Rle: project.RleManifest{
+		Name:                "competitive_intelligence_agent",
+		Version:             "2.0.0",
+		Type:                project.RleTypeHarness,
+		Subtype:             project.RleSubtypeHostedAgent,
+		AgentName:           new("ci-agent"),
+		AgentVersion:        new("15"),
+		EnvironmentProtocol: new(project.RleEnvironmentProtocolMcpEnvironment),
+	}}
+
+	body, err := json.Marshal(buildEnvironmentCreateRequest(config, "registry.azurecr.io/ci:2.0.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	// The service deserializes this one key as snake_case while its neighbours
+	// are camelCase, so the name is asserted literally rather than through the
+	// struct: a camelCase slip would be dropped and publish would succeed with
+	// a legacy environment.
+	if sent["environment_protocol"] != "mcp_environment" {
+		t.Fatalf("environment_protocol = %v, want mcp_environment; body %s", sent["environment_protocol"], body)
+	}
+
+	config.Rle.EnvironmentProtocol = nil
+	body, err = json.Marshal(buildEnvironmentCreateRequest(config, "registry.azurecr.io/ci:2.0.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "environment_protocol") {
+		t.Fatalf("a legacy environment must omit the key entirely, got %s", body)
+	}
+}
+
+func TestVerifyPublishedEnvironmentRejectsADowngradedProtocol(t *testing.T) {
+	config := project.RleConfig{Rle: project.RleManifest{
+		Name:                "competitive_intelligence_agent",
+		Version:             "2.0.0",
+		Type:                project.RleTypeHarness,
+		Subtype:             project.RleSubtypeHostedAgent,
+		AgentName:           new("ci-agent"),
+		AgentVersion:        new("15"),
+		EnvironmentProtocol: new(project.RleEnvironmentProtocolMcpEnvironment),
+	}}
+	published := &environmentResource{
+		Name:         "competitive_intelligence_agent",
+		Version:      "2.0.0",
+		Type:         "Harness",
+		Subtype:      "HostedAgent",
+		AgentName:    "ci-agent",
+		AgentVersion: "15",
+	}
+
+	// A version's protocol is immutable, so a service that ignored the field
+	// leaves the user with an environment that can never take the MCP path.
+	// Without this check publish would report success.
+	err := verifyPublishedEnvironment(config, published)
+	var localErr *azdext.LocalError
+	if !errors.As(err, &localErr) || localErr.Code != "rle_published_environment_mismatch" {
+		t.Fatalf("expected a protocol mismatch, got %v", err)
+	}
+	if !strings.Contains(localErr.Message, "legacy (unset)") {
+		t.Fatalf("message should name the absent protocol, got %q", localErr.Message)
+	}
+
+	published.EnvironmentProtocol = new(project.RleEnvironmentProtocolMcpEnvironment)
+	if err := verifyPublishedEnvironment(config, published); err != nil {
+		t.Fatalf("a matching protocol must verify, got %v", err)
 	}
 }
 

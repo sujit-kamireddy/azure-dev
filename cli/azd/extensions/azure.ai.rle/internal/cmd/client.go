@@ -48,6 +48,12 @@ type v1EnvironmentRequest struct {
 	BaseURL       *string                         `json:"baseUrl,omitempty"`
 	SchemaVersion *string                         `json:"schemaVersion,omitempty"`
 	Defaults      *project.RleEnvironmentDefaults `json:"defaults,omitempty"`
+
+	// EnvironmentProtocol is snake_case where its neighbours are camelCase
+	// because that is the name the service deserializes, and it refuses every
+	// value but mcp_environment, so it has to be omitted rather than sent empty
+	// to publish a legacy environment.
+	EnvironmentProtocol *project.RleEnvironmentProtocol `json:"environment_protocol,omitempty"`
 }
 
 type environmentResource struct {
@@ -61,6 +67,7 @@ type environmentResource struct {
 	AgentName                 string                          `json:"agentName,omitempty"`
 	AgentVersion              string                          `json:"agentVersion,omitempty"`
 	BaseURL                   string                          `json:"baseUrl,omitempty"`
+	EnvironmentProtocol       *project.RleEnvironmentProtocol `json:"environment_protocol,omitempty"`
 	SchemaVersion             *string                         `json:"schemaVersion,omitempty"`
 	Defaults                  *project.RleEnvironmentDefaults `json:"defaults,omitempty"`
 	CreatedAt                 string                          `json:"createdAtUtc,omitempty"`
