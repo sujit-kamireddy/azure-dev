@@ -25,8 +25,7 @@ const (
 
 // resolveFinetuneEndpoint picks the fine-tuning API the RLE commands talk to:
 // the --endpoint flag, then RLE_TRAIN_ENDPOINT, else the endpoint derived from
-// the Foundry project. All three RLE commands share it so that a job submitted
-// by train is the one jobs and monitor look for.
+// the Foundry project. Train and jobs share it; monitoring reads RLE APIs only.
 func resolveFinetuneEndpoint(flagValue string, projectEndpoint string) (string, error) {
 	if raw := strings.TrimSpace(flagValue); raw != "" {
 		return normalizeFinetuneEndpoint(raw)

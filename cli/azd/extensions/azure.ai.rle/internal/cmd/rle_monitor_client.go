@@ -26,10 +26,8 @@ var monitorErrorCodePattern = regexp.MustCompile(`^[A-Za-z0-9_]{1,80}$`)
 var monitorCorrelationPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
 
 type rleJobSource struct {
-	rle     *rleClient
-	ft      *finetuneClient
-	jobID   string
-	project string
+	rle   *rleClient
+	jobID string
 }
 
 func (s *rleJobSource) read(ctx context.Context, path string, target any, limit int64) error {
@@ -117,23 +115,17 @@ func (s *rleJobSource) Result(ctx context.Context, entry monitor.JobRollout) (ro
 }
 
 func (s *rleJobSource) Status(ctx context.Context) (string, error) {
-	job, err := s.ft.getJob(ctx, s.jobID, s.project)
-	if err != nil {
+	var job struct {
+		JobID  string `json:"job_id"`
+		Status string `json:"status"`
+	}
+	if err := s.read(ctx, s.jobPath(), &job, 1<<20); err != nil {
 		return "", err
 	}
-	if job.Id != s.jobID || job.Status == "" {
-		return "", errors.New("invalid fine-tuning job status response")
+	if job.JobID != s.jobID || strings.TrimSpace(job.Status) == "" {
+		return "", errors.New("invalid RLE job status response")
 	}
 	return job.Status, nil
-}
-
-func (c *finetuneClient) getJob(ctx context.Context, jobID, project string) (*finetuneJobResource, error) {
-	var job finetuneJobResource
-	err := readMonitorJSON(ctx, c.httpClient, c.baseUrl, finetuneJobsPath+"/"+url.PathEscape(jobID),
-		c.authorizationHeader, map[string]string{
-			"azureai-project": project, "azureai-project-is-default": "true",
-		}, &job, 1<<20)
-	return &job, err
 }
 
 func readMonitorJSON(

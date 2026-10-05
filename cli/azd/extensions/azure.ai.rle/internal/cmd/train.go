@@ -373,7 +373,7 @@ func (a *trainAction) followJob(
 	dashboard := make(chan struct{})
 	go func() {
 		defer close(dashboard)
-		if err := runRealJobMonitor(ctx, a.cmd, projectEndpoint, client, jobID, a.flags.noBrowser); err != nil {
+		if err := runRealJobMonitor(ctx, a.cmd, projectEndpoint, jobID, a.flags.noBrowser); err != nil {
 			// The stream is the part that must keep working; a dashboard that
 			// cannot start is worth saying once and no more.
 			fmt.Fprintf(a.cmd.ErrOrStderr(), "The job monitor did not start: %v\n", err)
