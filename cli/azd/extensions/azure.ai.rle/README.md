@@ -639,8 +639,12 @@ azd ai rle train `
 `FOUNDRY_PROJECT_ENDPOINT` identifies the project that owns the named RLE. The
 fine-tuning endpoint is normally derived from the same account as
 `https://<account>.openai.azure.com`. Set `RLE_TRAIN_ENDPOINT` to route `train`,
-`jobs`, and job monitoring to a facade or mock service instead. An explicit
+and `jobs` to a facade or mock service instead. An explicit
 `--endpoint` still takes precedence.
+Job creation automatically acquires a Foundry token
+(`https://ai.azure.com/.default`) and forwards it in `aml-user-token` for
+evaluation authentication. The request's `Authorization` header still uses
+the Cognitive Services token. No token parameter is required.
 For development, set `RLE_ENV_OVERRIDE` to have `train` send its value in the
 `rleEnvOverride` request header, which pins the RLE environment the job runs against.
 A training file is required and must point to a regular local training dataset
@@ -690,7 +694,7 @@ Polling is shared across browser tabs:
 | Running rollouts shown on the open Rollouts tab, point-read for status and results | 10 seconds |
 | Other running rollouts (newest first, at most 50 reads per cycle) | 1 minute |
 | Metric reread, for late rows | 60 seconds |
-| Fine-tuning job status | 1 minute until terminal |
+| RLE job status | 1 minute until terminal |
 | Full rollout result | On click only |
 
 Each rollout scan starts without a continuation token and follows tokens, including
@@ -710,8 +714,12 @@ metric-step-to-rollout navigation is not inferred from checkpoint strings.
 Execution status and the grader's task verdict are separate.
 
 The project must expose the RLE persistence APIs and grant RLE read access.
-Submission/status still use the fine-tuning service; registration/config,
-metrics and rollout reads use the Foundry project's RLE service.
+Submission still uses the fine-tuning service. Status, registration/config,
+metrics and rollout reads use the Foundry project's RLE service. Status uses
+`GET /rl_environments/jobs/{jobId}?api-version=2025-11-15-preview`,
+using the same API version as the other RLE reads.
+`monitor --job-id` no longer accepts `--endpoint`; `RLE_TRAIN_ENDPOINT` does not
+affect status polling, including the monitor opened by `train`.
 
 ### Facade monitoring (endpoint override)
 

@@ -25,7 +25,6 @@ var runAPIJobMonitor = monitor.RunRemoteJob
 func newMonitorCommand() *cobra.Command {
 	var rolloutID string
 	var jobID string
-	var endpoint string
 	var noBrowser bool
 	var outputDir string
 	cmd := &cobra.Command{
@@ -41,9 +40,9 @@ opening a browser. Incomplete or corrupt artifacts still return an error.
 
 With --job-id, always read config, metrics, logs and rollouts directly from the
 RLE service into memory: no local run files are required, and graphs are
-fetched only when opened. --endpoint or RLE_TRAIN_ENDPOINT only changes where
-job status is read from (see azd ai rle train --help); Sign-in and a Foundry
-project are required either way.
+fetched only when opened. Job status is also read from the RLE service.
+Sign-in and a Foundry project are required. RLE_TRAIN_ENDPOINT does not
+affect monitoring.
 
 The monitor stays running until Ctrl+C. Use --no-browser to open the printed
 link manually and enter the local access code.`,
@@ -73,7 +72,7 @@ link manually and enter the local access code.`,
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			defer stop()
 			if jobID != "" {
-				return runMonitorForJob(ctx, cmd, jobID, endpoint, noBrowser)
+				return runMonitorForJob(ctx, cmd, jobID, noBrowser)
 			}
 			if err := rollouts.ValidateID(rolloutID); err != nil {
 				return invalidMonitorIDError(err)
@@ -97,7 +96,6 @@ link manually and enter the local access code.`,
 	}
 	cmd.Flags().StringVar(&rolloutID, "rollout-id", "", "ID of a rollout in the artifact directory.")
 	cmd.Flags().StringVar(&jobID, "job-id", "", "ID of a training job whose recorded rollouts to browse.")
-	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Fine-tuning endpoint that owns the job (used with --job-id).")
 	cmd.Flags().StringVar(&outputDir, "output-dir", defaultRolloutOutputDir, "Artifact root used by rollout --output-dir.")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the dashboard link without opening a browser.")
 	return cmd
@@ -107,7 +105,6 @@ func runMonitorForJob(
 	ctx context.Context,
 	cmd *cobra.Command,
 	jobID string,
-	endpoint string,
 	noBrowser bool,
 ) error {
 	if err := rejectRealMonitorFlags(cmd, "output-dir"); err != nil {
@@ -120,15 +117,7 @@ func runMonitorForJob(
 	if err != nil {
 		return err
 	}
-	finetuneEndpoint, err := resolveFinetuneEndpoint(endpoint, projectEndpoint)
-	if err != nil {
-		return err
-	}
-	client, err := createFinetuneClient(finetuneEndpoint)
-	if err != nil {
-		return err
-	}
-	return runRealJobMonitor(ctx, cmd, projectEndpoint, client, jobID, noBrowser)
+	return runRealJobMonitor(ctx, cmd, projectEndpoint, jobID, noBrowser)
 }
 
 func validateRleJobID(jobID string) error {
@@ -156,22 +145,14 @@ func rejectRealMonitorFlags(cmd *cobra.Command, flags ...string) error {
 }
 
 func runRealJobMonitor(
-	ctx context.Context, cmd *cobra.Command, projectEndpoint string, client *finetuneClient, jobID string, noBrowser bool,
+	ctx context.Context, cmd *cobra.Command, projectEndpoint string, jobID string, noBrowser bool,
 ) error {
-	project, err := projectRouteSegment(projectEndpoint)
-	if err != nil {
-		return err
-	}
 	rle, err := createRleClient(projectEndpoint)
 	if err != nil {
 		return err
 	}
-	// The monitor polls several endpoints at once, so both clients share one token cache.
-	credential := newCachedTokenCredential(rle.credential)
-	rle.credential = credential
-	monitorFT := *client
-	monitorFT.credential = credential
-	source := &rleJobSource{rle: rle, ft: &monitorFT, jobID: jobID, project: project}
+	rle.credential = newCachedTokenCredential(rle.credential)
+	source := &rleJobSource{rle: rle, jobID: jobID}
 	return runAPIJobMonitor(ctx, source, jobID, noBrowser, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 

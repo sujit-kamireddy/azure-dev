@@ -186,10 +186,22 @@ func (c *finetuneClient) createJob(
 	request finetuneJobCreationRequest,
 	azureAIProject string,
 ) (*finetuneJobResource, error) {
+	// Foundry evaluation saves this assertion for OBO authentication. It needs
+	// the Foundry audience, not the Cognitive Services request token.
+	userToken, err := c.credential.GetToken(ctx, policy.TokenRequestOptions{
+		Scopes: []string{foundryTokenScope},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("acquire Foundry evaluation user token: %w", err)
+	}
+	if strings.TrimSpace(userToken.Token) == "" {
+		return nil, errors.New("Foundry evaluation user token is empty")
+	}
 	var result finetuneJobResource
 	headers := map[string]string{
 		"azureai-project":            azureAIProject,
 		"azureai-project-is-default": "true",
+		executeRolloutHeader:         userToken.Token,
 	}
 	// Development aid: lets the team pin the RLE environment a job runs against.
 	if override := strings.TrimSpace(os.Getenv(rleEnvOverrideEnvVar)); override != "" {

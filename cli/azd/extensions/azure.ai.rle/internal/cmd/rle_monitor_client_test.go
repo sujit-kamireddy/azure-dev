@@ -36,7 +36,7 @@ func stubAPIJobMonitor(t *testing.T) {
 // test for the single unified mode: train's own post-submission monitor and a
 // separate `azd ai rle monitor --job-id` both read Config/Metrics/Rollouts from
 // the real RLE service, whether or not RLE_TRAIN_ENDPOINT/--endpoint is set.
-// Only job creation and status ever go through a facade endpoint.
+// Job status is read from RLE even when training uses a facade endpoint.
 func TestTrainAndMonitorUseTheSameAPIBackendRegardlessOfEndpoint(t *testing.T) {
 	for _, env := range []string{"", "https://facade.example.com"} {
 		t.Run("env="+env, func(t *testing.T) {
@@ -50,7 +50,7 @@ func TestTrainAndMonitorUseTheSameAPIBackendRegardlessOfEndpoint(t *testing.T) {
 				calls++
 				s, ok := source.(*rleJobSource)
 				if !ok || id != realMonitorJobID || !noBrowser || s.jobID != id ||
-					s.project != "project" || s.rle.baseUrl != "https://account.services.ai.azure.com/api/projects/project" {
+					s.rle.baseUrl != "https://account.services.ai.azure.com/api/projects/project" {
 					t.Fatalf("unexpected monitor source: %#v", source)
 				}
 				return nil
@@ -63,6 +63,12 @@ func TestTrainAndMonitorUseTheSameAPIBackendRegardlessOfEndpoint(t *testing.T) {
 			if err := action.Run(); err != nil {
 				t.Fatal(err)
 			}
+			originalCreateFT := createFinetuneClient
+			createFinetuneClient = func(string) (*finetuneClient, error) {
+				t.Fatal("standalone monitoring must not create a fine-tuning client")
+				return nil, errors.New("unexpected fine-tuning client")
+			}
+			t.Cleanup(func() { createFinetuneClient = originalCreateFT })
 			command := newMonitorCommand()
 			command.SetOut(io.Discard)
 			command.SetErr(io.Discard)
@@ -77,17 +83,71 @@ func TestTrainAndMonitorUseTheSameAPIBackendRegardlessOfEndpoint(t *testing.T) {
 	}
 }
 
+func TestRleJobStatusReadContract(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		body   string
+		code   int
+		want   string
+		hasErr bool
+	}{
+		{"running", `{"job_id":"` + realMonitorJobID + `","status":"running"}`, 200, "running", false},
+		{"terminal", `{"job_id":"` + realMonitorJobID + `","status":"succeeded"}`, 200, "succeeded", false},
+		{"missing status", `{"job_id":"` + realMonitorJobID + `"}`, 200, "", true},
+		{"blank status", `{"job_id":"` + realMonitorJobID + `","status":" "}`, 200, "", true},
+		{"wrong job", `{"job_id":"other","status":"running"}`, 200, "", true},
+		{"unregistered", `{"code":"JobNotFound"}`, 404, "", true},
+		{"throttled", `{"code":"TooManyRequests"}`, 429, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			credential := &testTokenCredential{}
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet ||
+					r.URL.Path != "/api/projects/project/rl_environments/jobs/"+realMonitorJobID ||
+					r.URL.RawQuery != "api-version="+foundryAPIVersion {
+					t.Errorf("unexpected status request %s %s", r.Method, r.URL)
+				}
+				if r.Header.Get("Authorization") == "" ||
+					r.Header.Get("azureai-project") != "" || r.Header.Get("azureai-project-is-default") != "" {
+					t.Error("status must use Foundry authentication without direct fine-tuning project headers")
+				}
+				w.WriteHeader(tc.code)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+			rle := newRleClientWithCredential(server.URL+"/api/projects/project", credential)
+			rle.httpClient = server.Client()
+			source := &rleJobSource{rle: rle, jobID: realMonitorJobID}
+			status, err := source.Status(t.Context())
+			if (err != nil) != tc.hasErr || status != tc.want {
+				t.Fatalf("got status=%q err=%v, want status=%q error=%v", status, err, tc.want, tc.hasErr)
+			}
+			if len(credential.scopes) != 1 || credential.scopes[0] != foundryTokenScope {
+				t.Fatalf("unexpected status token scopes %v", credential.scopes)
+			}
+		})
+	}
+}
+
+func TestMonitorRejectsFineTuningEndpointOverride(t *testing.T) {
+	command := newMonitorCommand()
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"--job-id", realMonitorJobID, "--endpoint", "https://facade.example.com"})
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "unknown flag: --endpoint") {
+		t.Fatalf("expected removed endpoint flag to be rejected, got %v", err)
+	}
+}
+
 func TestRleMonitorClientRoutesAndScopes(t *testing.T) {
 	credential := &testTokenCredential{}
 	rle := newRleClientWithCredential("https://account.services.ai.azure.com/api/projects/project", credential)
-	ftCred := &testTokenCredential{}
-	ft := newFinetuneClientWithCredential("https://account.openai.azure.com", ftCred)
-	s := &rleJobSource{rle: rle, ft: ft, jobID: realMonitorJobID, project: "project"}
+	s := &rleJobSource{rle: rle, jobID: realMonitorJobID}
 	rle.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method != "GET" || req.URL.Query().Get("api-version") != foundryAPIVersion {
 			t.Fatalf("unexpected request %s", req.URL)
 		}
-		body := `{"job_id":"` + realMonitorJobID + `","model_name":"sample"}`
+		body := `{"job_id":"` + realMonitorJobID + `","model_name":"sample","status":"running"}`
 		switch {
 		case strings.HasSuffix(req.URL.Path, "/metrics"):
 			if req.URL.Query().Get("lastStep") != "7" || req.URL.Query().Get("continuationToken") != "a+/=" {
@@ -105,13 +165,6 @@ func TestRleMonitorClientRoutesAndScopes(t *testing.T) {
 				`","status":"completed","success":false}]}`
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
-	})
-	ft.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path != finetuneJobsPath+"/"+realMonitorJobID || req.Header.Get("azureai-project") != "project" {
-			t.Fatalf("unexpected job status request: %s", req.URL)
-		}
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(
-			`{"id":"` + realMonitorJobID + `","status":"running"}`)), Header: http.Header{}}, nil
 	})
 	if _, err := s.Config(t.Context()); err != nil {
 		t.Fatal(err)
@@ -131,9 +184,6 @@ func TestRleMonitorClientRoutesAndScopes(t *testing.T) {
 		if scope != foundryTokenScope {
 			t.Fatal("RLE used fine-tuning auth scope")
 		}
-	}
-	if len(ftCred.scopes) != 1 || ftCred.scopes[0] != finetuneTokenScope {
-		t.Fatal("wrong status auth scope")
 	}
 }
 

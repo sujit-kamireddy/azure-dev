@@ -2,6 +2,16 @@
 
 ## 0.8.24-preview
 
+- Training submissions now automatically forward a Foundry user token in
+  `aml-user-token` for evaluation authentication, separate from the
+  Cognitive Services request token. Token acquisition failures stop submission.
+
+- Job monitors now read status from the Foundry project's RLE jobs API, using
+  `GET /rl_environments/jobs/{jobId}?api-version=2025-11-15-preview` and Foundry
+  authentication, instead of the fine-tuning or facade service. Standalone
+  monitoring no longer creates a fine-tuning client or accepts `--endpoint`.
+  Submission, input uploads and artifact streaming are unchanged.
+
 - `azd ai rle train` no longer requires `--follow` to mirror a run's logs and
   metrics locally and open its job monitor: both now happen by default, the
   same way `rollout` already opens a dashboard by default. Pass `--no-follow`

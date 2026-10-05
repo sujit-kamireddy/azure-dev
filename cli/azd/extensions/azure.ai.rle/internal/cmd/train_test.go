@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -18,6 +19,8 @@ import (
 
 	"azure.ai.rle/internal/monitor"
 	"azure.ai.rle/internal/project"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 )
 
@@ -252,7 +255,7 @@ func TestFinetuneClientSendsProjectHeadersAndAuthenticates(t *testing.T) {
 }
 
 func testFinetuneClientHeaders(t *testing.T, wantOverride string) {
-	credential := &testTokenCredential{}
+	credential := &finetuneSubmissionCredential{}
 	client := newFinetuneClientWithCredential("https://resource.openai.azure.com", credential)
 	client.httpClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if got := request.Header.Get("Authorization"); got != "Bearer test-token" {
@@ -269,6 +272,9 @@ func testFinetuneClientHeaders(t *testing.T, wantOverride string) {
 		}
 		if got := request.Header.Get("azureai-project-is-default"); got != "true" {
 			t.Fatalf("expected azureai-project-is-default=true, got %q", got)
+		}
+		if request.Header.Get(executeRolloutHeader) != "foundry-user-token" {
+			t.Fatal("expected the separate Foundry user token in aml-user-token")
 		}
 		if got := request.Header.Get(rleEnvOverrideHeader); got != wantOverride {
 			t.Fatalf("expected %s=%q, got %q", rleEnvOverrideHeader, wantOverride, got)
@@ -287,8 +293,47 @@ func testFinetuneClientHeaders(t *testing.T, wantOverride string) {
 	if job.Id != "ftjob-1" || job.Status != "queued" {
 		t.Fatalf("expected decoded job response, got %#v", job)
 	}
-	if len(credential.scopes) != 1 || credential.scopes[0] != finetuneTokenScope {
+	if len(credential.scopes) != 2 || credential.scopes[0] != foundryTokenScope ||
+		credential.scopes[1] != finetuneTokenScope {
 		t.Fatalf("expected fine-tuning token scope %q, got %v", finetuneTokenScope, credential.scopes)
+	}
+}
+
+type finetuneSubmissionCredential struct {
+	scopes []string
+	err    error
+	empty  bool
+}
+
+func (c *finetuneSubmissionCredential) GetToken(
+	_ context.Context, options policy.TokenRequestOptions,
+) (azcore.AccessToken, error) {
+	c.scopes = append(c.scopes, options.Scopes...)
+	if options.Scopes[0] == foundryTokenScope {
+		if c.err != nil || c.empty {
+			return azcore.AccessToken{}, c.err
+		}
+		return azcore.AccessToken{Token: "foundry-user-token", ExpiresOn: time.Now().Add(time.Hour)}, nil
+	}
+	return azcore.AccessToken{Token: "test-token", ExpiresOn: time.Now().Add(time.Hour)}, nil
+}
+
+func TestFinetuneSubmissionStopsWhenFoundryTokenUnavailable(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty=%v", empty), func(t *testing.T) {
+			credential := &finetuneSubmissionCredential{empty: empty}
+			if !empty {
+				credential.err = errors.New("credential unavailable")
+			}
+			client := newFinetuneClientWithCredential("https://resource.openai.azure.com", credential)
+			client.httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+				t.Fatal("job must not be submitted without a Foundry user token")
+				return nil, errors.New("unexpected submission")
+			})
+			if _, err := client.createJob(t.Context(), finetuneJobCreationRequest{}, "project"); err == nil {
+				t.Fatal("expected token acquisition error")
+			}
+		})
 	}
 }
 
@@ -306,6 +351,9 @@ func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
 	client.httpClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		switch request.URL.Path {
 		case finetuneFilesPath:
+			if request.Header.Get(executeRolloutHeader) != "" {
+				t.Fatal("file uploads must not forward the evaluation user token")
+			}
 			uploadCount++
 			if _, err := io.ReadAll(request.Body); err != nil {
 				t.Fatal(err)
