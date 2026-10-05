@@ -91,9 +91,10 @@ func newRunMirror(logsRoot string, jobID string) (*runMirror, error) {
 	return mirror, nil
 }
 
-// adoptExistingFiles lets a re-run of --follow against the same job resume
-// rather than re-download. Only appended files can be resumed by length;
-// replaced files are re-sent, which costs nothing because they are small.
+// adoptExistingFiles lets resuming a stream into the same job directory pick
+// up where it left off, rather than re-download. Only appended files can be
+// resumed by length; replaced files are re-sent, which costs nothing because
+// they are small.
 func (m *runMirror) adoptExistingFiles() {
 	for name := range trainStreamArtifacts {
 		info, err := os.Stat(filepath.Join(m.directory, name))
@@ -334,8 +335,8 @@ func reportStreamCompletion(out io.Writer, frame trainStreamFrame, mirror *runMi
 
 func newTrainStreamDialError(cause error, response *http.Response) error {
 	suggestion := "Check that the fine-tuning endpoint supports run streaming and that you " +
-		"can reach it. The job is unaffected; re-attach with --follow or poll it with " +
-		"azd ai rle jobs."
+		"can reach it. The job is unaffected; check it with azd ai rle jobs, or open its " +
+		"dashboard with azd ai rle monitor --job-id <job-id>."
 	if response != nil {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
 		if err := response.Body.Close(); err != nil {

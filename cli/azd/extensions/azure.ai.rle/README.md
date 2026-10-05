@@ -589,7 +589,7 @@ monitor without deleting saved artifacts.
 | Option | When to use it |
 | --- | --- |
 | `--output-dir <path>` | Read from an artifact root other than `.output` in the current folder. Pass the parent of the rollout-ID directories, not an individual rollout folder. |
-| `--logs-root <path>` | With facade `--job-id` monitoring, read the run mirror `train --follow` wrote somewhere other than `$LOOM_LOGS_ROOT` or `~/loom-runs`. Not supported for real-service monitoring. |
+| `--logs-root <path>` | With facade `--job-id` monitoring, read the run mirror `train` wrote somewhere other than `$LOOM_LOGS_ROOT` or `~/loom-runs`. Not supported for real-service monitoring. |
 | `--no-browser` | On standalone `monitor`, print a link instead of opening the browser. Open the printed link yourself. |
 
 `--no-prompt` does not disable browser launching or stop the monitor.
@@ -653,11 +653,12 @@ invocation.
 
 ### Real-service monitoring (default endpoint)
 
-Without `--endpoint` or `RLE_TRAIN_ENDPOINT`, **train always opens the job
-monitor after submission**, even with redirected output or `--no-prompt`.
-Keep the process running to use the UI; Ctrl+C stops monitoring, not training.
-`--no-browser` prints the URL without opening a browser. `--follow`, `--logs-root`
-and explicit `--output` are rejected on this path rather than silently ignored.
+Without `--endpoint` or `RLE_TRAIN_ENDPOINT`, **train opens the job monitor
+after submission by default**, even with redirected output or `--no-prompt`;
+pass `--no-follow` to skip it and exit immediately instead. Keep the process
+running to use the UI; Ctrl+C stops monitoring, not training. `--no-browser`
+prints the URL without opening a browser. Explicit `--output` is rejected on
+this path rather than silently ignored.
 
 Reopen the same monitor from any machine with project access:
 
@@ -716,35 +717,35 @@ metrics and rollout reads use the Foundry project's RLE service.
 
 An explicit `--endpoint` or non-empty `RLE_TRAIN_ENDPOINT` preserves the existing
 facade path, even if an explicit endpoint happens to name an OpenAI resource.
-On this path, `--follow` mirrors the run's artifacts to the local disk as they are written and
-waits for the job to finish:
+On this path, `train` mirrors the run's artifacts to the local disk as they are
+written and waits for the job to finish, by default:
 
 ```powershell
-azd ai rle train ... --follow --logs-root $HOME/loom-runs
+azd ai rle train ... --logs-root $HOME/loom-runs
 ```
 
 Files land in `<logs-root>/rle-harness/<job id>/`, which is the layout the Loom
-cookbook's `dashboard_server.py` discovers, so a followed run can be opened in
+cookbook's `dashboard_server.py` discovers, so a run being mirrored can be opened in
 the existing dashboard while it is still going:
 
 ```bash
 python dashboard_server.py --root ~/loom-runs
 ```
 
-`--logs-root` defaults to `$LOOM_LOGS_ROOT`, else `~/loom-runs`. Following is
-resumable: re-running `--follow` for the same job continues from the bytes
+`--logs-root` defaults to `$LOOM_LOGS_ROOT`, else `~/loom-runs`. Mirroring is
+resumable: re-running `train` for the same job continues from the bytes
 already on disk. If the stream drops, `train` reports it but still exits zero --
 the job was accepted and is running on the service, and a non-zero exit would
 say otherwise.
 
-`--follow` also serves the run dashboard for the job it submitted, and prints
-its address:
+By default `train` also serves the run dashboard for the job it submitted, and
+prints its address:
 
 ```text
 Job monitor for ftjob-1234 (0 rollouts so far): http://127.0.0.1:41233/
 ```
 
-The dashboard reads the same local mirror the stream is writing, so a followed
+The dashboard reads the same local mirror the stream is writing, so a mirrored
 run is shown as a run rather than as a list of rollouts:
 
 - **What it is** -- environment name and version, base model, renderer, Loom
@@ -766,7 +767,7 @@ dashboard stays up after the run finishes -- that is when its rollouts are
 finally all there to read -- so stop it with Ctrl+C. `--no-browser` prints the
 address without opening a browser.
 
-Without `--follow` the command exits as soon as the job is accepted, so there is
+With `--no-follow`, the command exits as soon as the job is accepted, so there is
 nothing left to serve a dashboard from. It names the command that opens one
 instead:
 
@@ -775,10 +776,11 @@ Watch this run's rollouts as they land:
   azd ai rle monitor --job-id ftjob-1234
 ```
 
-`monitor --job-id` shows the same run panels for any job that was followed on
-this machine, reading `--logs-root` (default `$LOOM_LOGS_ROOT`, else
-`~/loom-runs`). A job that was never followed here still lists its rollouts --
-those come from the service -- with the run panels omitted.
+`monitor --job-id` shows the same run panels for any job that was mirrored on
+this machine (that is, not submitted with `--no-follow`), reading `--logs-root`
+(default `$LOOM_LOGS_ROOT`, else `~/loom-runs`). A job that was never mirrored
+here still lists its rollouts -- those come from the service -- with the run
+panels omitted.
 ### Training settings in `rle.toml`
 
 Everything above can be recorded in the environment's own `rle.toml`, so a run

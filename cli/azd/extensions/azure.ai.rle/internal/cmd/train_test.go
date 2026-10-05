@@ -355,6 +355,11 @@ func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
 	command.SetContext(context.Background())
 	var output bytes.Buffer
 	command.SetOut(&output)
+	originalFollow := followTrainingRunFunc
+	followTrainingRunFunc = func(context.Context, string, string, string, string, io.Writer) (string, error) {
+		return "succeeded", nil
+	}
+	t.Cleanup(func() { followTrainingRunFunc = originalFollow })
 	action := &trainAction{
 		cmd: command,
 		flags: &rleTrainFlags{
@@ -362,6 +367,7 @@ func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
 			rleVersion:   "1.0.0",
 			model:        "Qwen/Qwen3-32B",
 			trainingFile: trainingFilePath,
+			noBrowser:    true,
 		},
 	}
 
@@ -554,7 +560,7 @@ func stubbedTrain(t *testing.T, ctx context.Context, flags *rleTrainFlags) (*tra
 // The point of following a run is watching its rollouts land, so the dashboard
 // runs alongside the stream rather than after it, and outlives it: the run
 // ending is when the rollouts are finally all there to read.
-func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
+func TestTrainServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -580,7 +586,7 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 
 	logsRoot := t.TempDir()
 	action, output := stubbedTrain(t, ctx,
-		&rleTrainFlags{follow: true, noBrowser: true, logsRoot: logsRoot})
+		&rleTrainFlags{noBrowser: true, logsRoot: logsRoot})
 
 	returned := make(chan error, 1)
 	go func() { returned <- action.Run() }()
@@ -618,6 +624,56 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "job monitor is still running") {
 		t.Fatalf("output = %q, want the monitor to outlive the run", output.String())
+	}
+}
+
+// TestTrainNoFollowExitsImmediatelyWithoutMonitoringOrStreaming is the
+// regression test for --no-follow: the job is still submitted, but nothing
+// after that point may open the dashboard or stream artifacts, and the
+// command must not block waiting on either.
+func TestTrainNoFollowExitsImmediatelyWithoutMonitoringOrStreaming(t *testing.T) {
+	action, output := stubbedTrain(t, t.Context(), &rleTrainFlags{noFollow: true})
+
+	originalCreateRle := createRleClient
+	createRleClient = func(string) (*rleClient, error) {
+		t.Fatal("--no-follow must not open the job monitor")
+		return nil, nil
+	}
+	t.Cleanup(func() { createRleClient = originalCreateRle })
+
+	originalRunAPI := runAPIJobMonitor
+	runAPIJobMonitor = func(context.Context, monitor.JobSource, string, bool, io.Writer, io.Writer) error {
+		t.Fatal("--no-follow must not open the job monitor")
+		return nil
+	}
+	t.Cleanup(func() { runAPIJobMonitor = originalRunAPI })
+
+	originalFollow := followTrainingRunFunc
+	followTrainingRunFunc = func(context.Context, string, string, string, string, io.Writer) (string, error) {
+		t.Fatal("--no-follow must not stream run artifacts")
+		return "", nil
+	}
+	t.Cleanup(func() { followTrainingRunFunc = originalFollow })
+
+	done := make(chan error, 1)
+	go func() { done <- action.Run() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("--no-follow should return immediately, but train is still blocking")
+	}
+
+	if !strings.Contains(output.String(),
+		"Monitor this job anytime with: azd ai rle monitor --job-id "+realMonitorJobID) {
+		t.Fatalf("output = %q, want the reproducible monitor command", output.String())
+	}
+	if !strings.Contains(output.String(),
+		"--no-follow was set; exiting without streaming logs or opening the job monitor.") {
+		t.Fatalf("output = %q, want a no-follow confirmation", output.String())
 	}
 }
 

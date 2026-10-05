@@ -910,9 +910,12 @@ function renderRolloutList() {
     : `· ${count(entries.length)} of ${count(rolloutIndex.data.length)} recorded`;
   const body = byID("list-body");
   body.replaceChildren();
-  for (const entry of entries) {
+  entries.forEach((entry, index) => {
     const row = element("tr");
-    row.append(element("td", String(entry.sequence_id ?? entry.sequence ?? "—")));
+    // The real RLE service does not report a sampler sequence per rollout, so
+    // fall back to this row's position in the (oldest-first) list: a blank
+    // column on every row looks broken, while a position is still informative.
+    row.append(element("td", String(entry.sequence_id ?? entry.sequence ?? index + 1)));
     const open = element("button", short(entry.rollout_id, 14), "link-button");
     open.type = "button";
     open.title = entry.rollout_id;
@@ -956,7 +959,7 @@ function renderRolloutList() {
     if (entry.task_id) task.title = entry.task_id;
     row.append(task);
     body.append(row);
-  }
+  });
   byID("list-empty").hidden = rolloutIndex.data.length > 0;
   byID("list-table").hidden = entries.length === 0;
   renderRolloutTabCount();
@@ -1178,8 +1181,8 @@ async function pollForNewRollouts() {
 //
 // A job is shown as the run it is -- what it trains, on what, and whether it is
 // working -- above the rollouts it has produced. Everything here reads the
-// local mirror `train --follow` writes, so it appears only for a run that was
-// followed on this machine.
+// local mirror `train` writes by default, so it appears only for a run that
+// followed on this machine (not one started with --no-follow).
 // ---------------------------------------------------------------------------
 
 let runOverview = null;

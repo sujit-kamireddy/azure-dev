@@ -27,7 +27,7 @@ type rleTrainFlags struct {
 	validationFile  string
 	suffix          string
 	maxEpisodeSteps int
-	follow          bool
+	noFollow        bool
 	logsRoot        string
 	noBrowser       bool
 	taskCount       int
@@ -64,14 +64,16 @@ enabled for Loom-backed RL-environment training. Job creation fails if the base 
 enabled, or if the RLE version is not published and ready in the project set by
 FOUNDRY_PROJECT_ENDPOINT.
 
-train always opens a local monitor after submission and stays running until
-Ctrl+C (including in non-interactive runs). The monitor reads RLE APIs into
-memory; no training files are mirrored locally. Ctrl+C stops monitoring, not
-the remote job. Use --no-browser to open the link manually.
+By default train also streams the run's logs and metrics to a local mirror
+(--logs-root), in the layout the Loom dashboard reads, and opens a local
+monitor that stays running until Ctrl+C (including in non-interactive runs).
+The monitor reads RLE APIs into memory; no training files are mirrored beyond
+that stream. Ctrl+C stops monitoring, not the remote job. Use --no-browser to
+open the link manually.
 
-Add --follow to also stream the run's logs and metrics to a local mirror
-(--logs-root) while the monitor is open, in the layout the Loom dashboard
-reads.`,
+Pass --no-follow to skip both: the command submits the job, prints the
+azd ai rle monitor command that reopens it later, and exits immediately
+instead of blocking.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return (&trainAction{cmd: cmd, flags: flags}).Run()
@@ -92,11 +94,12 @@ reads.`,
 		"Suffix appended to the resulting fine-tuned model name. Defaults to train.suffix in ./rle.toml.")
 	cmd.Flags().IntVar(&flags.maxEpisodeSteps, "max-episode-steps", 0,
 		"Maximum steps the RLE executes per rollout (0 uses the service default).")
-	cmd.Flags().BoolVar(&flags.follow, "follow", false,
-		"Also stream the run's logs and metrics locally until the job finishes, in the layout "+
-			"the Loom dashboard reads, while the job monitor is open.")
+	cmd.Flags().BoolVar(&flags.noFollow, "no-follow", false,
+		"Skip the local log/metric mirror and the job monitor. Submit the job, print how "+
+			"to reopen its monitor later, and exit immediately instead of blocking until Ctrl+C.")
 	cmd.Flags().StringVar(&flags.logsRoot, "logs-root", "",
-		"Where --follow writes mirrored runs. Defaults to $LOOM_LOGS_ROOT, else ~/loom-runs.")
+		"Where the local log/metric mirror is written. Defaults to $LOOM_LOGS_ROOT, else "+
+			"~/loom-runs. Ignored with --no-follow.")
 	cmd.Flags().BoolVar(&flags.noBrowser, "no-browser", false,
 		"Print the job monitor address without opening a browser.")
 	cmd.Flags().IntVar(&flags.taskCount, "task-count", 0,
@@ -320,18 +323,27 @@ func (a *trainAction) Run() error {
 		return err
 	}
 
+	// Printed either way, so the dashboard this run opened (or skipped) is
+	// always reproducible later from just the job id.
+	if _, err := fmt.Fprintf(
+		a.cmd.OutOrStdout(),
+		"\nMonitor this job anytime with: azd ai rle monitor --job-id %s\n",
+		job.Id,
+	); err != nil {
+		return err
+	}
+
+	if a.flags.noFollow {
+		_, err := fmt.Fprintln(
+			a.cmd.OutOrStdout(),
+			"--no-follow was set; exiting without streaming logs or opening the job monitor.",
+		)
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(a.cmd.Context(), os.Interrupt)
 	defer stop()
-	if a.flags.follow {
-		return a.followJob(ctx, client, projectEndpoint, job.Id)
-	}
-	if err := runRealJobMonitor(ctx, a.cmd, projectEndpoint, client, job.Id, a.flags.noBrowser); err != nil {
-		return fmt.Errorf(
-			"job %s was accepted, but monitoring failed; reopen with azd ai rle monitor --job-id %s: %w",
-			job.Id, job.Id, err,
-		)
-	}
-	return nil
+	return a.followJob(ctx, client, projectEndpoint, job.Id)
 }
 
 // followJob mirrors the run's artifacts locally and serves its rollouts, until
