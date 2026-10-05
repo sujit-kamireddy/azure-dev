@@ -155,6 +155,8 @@ summary:hover { color: var(--accent); }
 .discarded .node-kind { fill: #69778e; }
 .node-label { fill: #2f3d5a; font-size: 15px; font-weight: 650; }
 .node-detail { fill: #708099; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.node-error-badge { fill: #a12b2b; stroke: #fff; stroke-width: 1.5; }
+.node-error-count { fill: #fff; font-size: 11px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
 .graph-node[aria-pressed="true"] .node-card { stroke: #517ae4; stroke-width: 2.5; filter: drop-shadow(0 4px 7px #466bd926); }
 .graph-node:hover .node-card { stroke: #6c89dc; stroke-width: 2; }
 .graph-node:focus-visible .node-card { stroke: #274ac4; stroke-width: 3; stroke-dasharray: 4 2; }
@@ -331,6 +333,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
 :where([data-theme="dark"]) .discarded .node-kind { fill: #bcc7d9; }
 :where([data-theme="dark"]) .node-label { fill: var(--text); }
 :where([data-theme="dark"]) .node-detail { fill: #b2bfd5; }
+:where([data-theme="dark"]) .node-error-badge { fill: #ffb0b0; stroke: #26283c; }
+:where([data-theme="dark"]) .node-error-count { fill: #452424; }
 :where([data-theme="dark"]) .graph-node[aria-pressed="true"] .node-card,
 :where([data-theme="dark"]) .graph-node:hover .node-card,
 :where([data-theme="dark"]) .graph-node:focus-visible .node-card { stroke: var(--accent); }
@@ -407,6 +411,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflo
   .node-kind, .root .node-kind, .discarded .node-kind, .node-label, .node-detail, .plot-label { fill: CanvasText; }
   .graph-edge, .plot-axis, .plot-range { stroke: CanvasText; }
   .node-dot, .arrow-head, .plot-point { fill: CanvasText; }
+  .node-error-badge { fill: Mark; stroke: CanvasText; }
+  .node-error-count { fill: MarkText; }
   .graph-node[aria-pressed="true"] .node-card, .graph-node:focus-visible .node-card { stroke: Highlight; }
   .badge, .mask-badge { border: 1px solid CanvasText; }
   .mask-region.target { fill: Highlight; }

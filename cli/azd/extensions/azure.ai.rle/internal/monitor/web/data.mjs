@@ -113,10 +113,10 @@ export function mapSnapshot(snapshot) {
   const graph = response.rollout_graph ?? response.rollout ?? {};
   validateFields(episode, { kind: isString, termination_reason: isString, ungraded: isBoolean }, "episode");
   validateFields(graph, { capture_level: isString, trainable: isBoolean, stats: isRecord,
-    sequences: Array.isArray, validation: Array.isArray }, "rollout_graph");
+    sequences: Array.isArray, validation: Array.isArray, model_call_errors: Array.isArray }, "rollout_graph");
   const stats = graph.stats ?? {};
   for (const key of ["n_turns", "n_roots", "n_forks", "n_discarded", "n_sequences",
-    "n_trainable_sequences", "n_trainable_tokens"]) optional(stats, key, isCount, "rollout_graph.stats");
+    "n_trainable_sequences", "n_trainable_tokens", "n_model_call_errors"]) optional(stats, key, isCount, "rollout_graph.stats");
   const steps = records(episode.steps, "episode.steps");
   const turns = records(graph.turns, "rollout_graph.turns");
   steps?.forEach((step, index) => validateFields(step,
@@ -126,6 +126,8 @@ export function mapSnapshot(snapshot) {
     n_tools: isCount, finish_reason: isString, discarded: isBoolean,
     request_messages: (value) => Array.isArray(value) && value.every(isRecord),
     response_message: isRecord,
+    n_tool_call_errors: isCount,
+    tool_call_errors: (value) => Array.isArray(value) && value.every(isRecord),
   }, `rollout.turns[${index}]`));
 
   const turnsByID = new Map();
@@ -161,6 +163,8 @@ export function mapSnapshot(snapshot) {
       requestMessages,
       responseMessage,
       toolCalls,
+      toolCallErrorCount: isCount(turn.n_tool_call_errors) ? turn.n_tool_call_errors : null,
+      toolCallErrors: Array.isArray(turn.tool_call_errors) ? turn.tool_call_errors : null,
       flow: [
         ...requestMessages.map((message) => messageRole(message, "request")),
         ...(responseMessage === null ? [] : [messageRole(responseMessage, "assistant")]),
@@ -176,6 +180,7 @@ export function mapSnapshot(snapshot) {
   return { response, source: snapshot.source, savedAt: snapshot.saved_at, environment, warnings: snapshot.warnings ?? [],
     episode, graph, stats,
     steps: mappedSteps, turns: mappedTurns, tokensCaptured: graph.capture_level === "tokens",
+    modelCallErrors: Array.isArray(graph.model_call_errors) ? graph.model_call_errors : [],
     finalResponse: finalResponse.full, finalResponsePreview: finalResponse.preview,
     finalResponseReasoningHidden: finalResponse.reasoningHidden,
     finalResponseExpandable: finalResponse.expandable,
@@ -309,6 +314,7 @@ export function buildGraph(graph = {}, { sequenceIndex = null, page = 0, limit =
     node.tools = only ? toolCallSummary(only.response_message) : [];
     node.finishReason = isString(only?.finish_reason) && only.finish_reason.trim()
       ? only.finish_reason.trim() : null;
+    node.toolCallErrorCount = isCount(only?.n_tool_call_errors) ? only.n_tool_call_errors : null;
     node.kind = node.unresolved ? "UNORDERED" : node.discarded ? "DISCARDED"
       : node.tools.length ? (node.root ? "ROOT TOOL CALL" : "TOOL CALL")
       : node.root ? "ROOT CALL" : "MODEL CALL";
