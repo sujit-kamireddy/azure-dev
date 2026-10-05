@@ -2,6 +2,27 @@
 
 ## 0.8.23-preview
 
+- `azd ai rle train` and `azd ai rle monitor --job-id` now read jobs submitted
+  to the real fine-tuning service from the RLE service APIs. When neither
+  `--endpoint` nor `RLE_TRAIN_ENDPOINT` is set, `train` opens the job monitor
+  after submission and keeps it running until Ctrl+C; Ctrl+C stops monitoring,
+  not the job. The monitor shows the job's registered config, its metrics and
+  its rollout list, and loads a rollout's conversation and graph only when you
+  open it. Everything is held in memory; no run files are written locally.
+  `--follow`, `--logs-root` and `--output` are rejected on this path because
+  they would have no effect. Jobs routed to a facade with `--endpoint` or
+  `RLE_TRAIN_ENDPOINT` keep the existing behavior.
+
+- In the real-service monitor, running rollouts in view refresh their status
+  sooner, and "Refresh service data" waits for the refresh to finish and says
+  when it did. With a rollout open, the button refreshes only that rollout.
+  A rollout with no result, such as one that failed, opens its own page that
+  explains why and summarizes what the service recorded.
+
+- For development, setting `RLE_ENV_OVERRIDE` makes `train` send its value in
+  the `rleEnvOverride` header, which pins the RLE environment the job runs
+  against.
+
 - `azd ai rle rollout` no longer accepts a caller-supplied agent input.
   `--agent-input` and `--agent-input-file` are removed, and the Execute
   Rollout request no longer carries an `agent_input` field: for Harness

@@ -5,8 +5,9 @@ import {
   buildGraph, chartGeometry, chartHoverAt, chartPath, chartScales, fetchRolloutIndex, fetchRolloutStates, fetchRunLog, fetchRunMetrics,
   fetchRunOverview, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
   runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage,
-  STATE_REQUEST_LIMIT, TOKEN_PAGE_SIZE,
-  toolCalls, toolCallSummary, withGroupSignal,
+  STATE_REQUEST_LIMIT, TOKEN_PAGE_SIZE, WATCH_LIMIT,
+  toolCalls, toolCallSummary, withGroupSignal, remoteRolloutState, remoteRunNotices,
+  unavailableRolloutFacts, unavailableRolloutMessage,
 } from "./data.mjs";
 
 const byID = (id) => document.getElementById(id);
@@ -828,6 +829,9 @@ byID("token-jump-form").addEventListener("submit", (event) => {
 });
 
 let rolloutIndex = null;
+const realService = () => rolloutIndex?.backend === "rle";
+let selectedRollout = "";
+let selectionVersion = 0;
 
 // Execution state arrives separately from the index and fills in over the life
 // of the monitor, so it is held beside the list rather than merged into it: an
@@ -908,7 +912,7 @@ function renderRolloutList() {
   body.replaceChildren();
   for (const entry of entries) {
     const row = element("tr");
-    row.append(element("td", String(entry.sequence ?? "")));
+    row.append(element("td", String(entry.sequence_id ?? entry.sequence ?? "—")));
     const open = element("button", short(entry.rollout_id, 14), "link-button");
     open.type = "button";
     open.title = entry.rollout_id;
@@ -916,11 +920,11 @@ function renderRolloutList() {
     const identity = element("td");
     identity.append(open);
     row.append(identity);
-    row.append(element("td", entry.split || "—"));
+    row.append(element("td", entry.split || "—", "col-split"));
     row.append(element("td", stepLabel(entry) || "—"));
     // Execution state precedes the reward because a reward from a rollout that
     // crashed is not a measurement of anything: the harness grades the wreckage.
-    const state = rolloutStates.get(entry.rollout_id);
+    const state = realService() ? { state: remoteRolloutState(entry) } : rolloutStates.get(entry.rollout_id);
     const execution = element("td");
     if (state?.state === "failed") {
       const badge = element("span", "Failed", "badge fault");
@@ -929,9 +933,12 @@ function renderRolloutList() {
       execution.append(badge);
     } else if (state?.state === "completed") {
       execution.append(element("span", "Completed", "badge positive"));
+    } else if (state?.state === "running") {
+      execution.append(element("span", "Running", "badge neutral"));
     } else {
       const unknown = element("span", "—", "muted");
-      unknown.title = "Not classified yet. The monitor reads rollout bodies in the background.";
+      unknown.title = realService() ? "Execution status not reported."
+        : "Not classified yet. The monitor reads rollout bodies in the background.";
       execution.append(unknown);
     }
     row.append(execution);
@@ -945,7 +952,7 @@ function renderRolloutList() {
     else outcome.append(element("span", "Not reported", "badge neutral"));
     row.append(outcome);
     row.append(element("td", isNumber(entry.latency_s) ? `${entry.latency_s.toFixed(1)}s` : "—"));
-    const task = element("td", short(entry.task_id || "—", 22));
+    const task = element("td", short(entry.task_id || "—", 22), "col-task");
     if (entry.task_id) task.title = entry.task_id;
     row.append(task);
     body.append(row);
@@ -988,6 +995,7 @@ function renderRolloutTabCount() {
 // Reading a chart raises exactly one question -- what happened at that step --
 // and the answer is in the other tab. Clicking a step carries the filter over.
 function showRolloutsForStep(step) {
+  if (realService()) return; // The service supplies no metric-step-to-rollout mapping.
   if (!rolloutIndex || byID("job-tabs").hidden) return;
   // The list keys steps by checkpoint where one was reported, so the chart's
   // step number is matched through a rollout rather than used as the value.
@@ -999,19 +1007,62 @@ function showRolloutsForStep(step) {
   selectTab("rollouts", true);
 }
 
+// A rollout without a readable result still opens as a rollout view, in place
+// of the job tabs, so going back works the same way for every row.
+function showUnavailableRollout(rolloutID, metadata) {
+  byID("load-status").className = "sr-only";
+  byID("load-status").textContent = "";
+  byID("snapshot").hidden = true;
+  byID("job-tabs").hidden = true;
+  byID("rollout-list").hidden = true;
+  byID("run-overview").hidden = true;
+  byID("run-log").hidden = true;
+  const name = metadata?.environment_name;
+  byID("remote-detail-title").textContent = name ? `${name} rollout` : "Rollout";
+  byID("remote-detail-id").textContent = rolloutID;
+  byID("remote-detail-message").textContent = unavailableRolloutMessage(metadata);
+  const facts = unavailableRolloutFacts(metadata);
+  byID("remote-detail-facts").replaceChildren(...(facts.length ? [factGroup("SUMMARY", facts)] : []));
+  byID("remote-detail-metadata").textContent = JSON.stringify(metadata ?? {}, null, 2);
+  byID("remote-detail").hidden = false;
+  updateRefreshLabel();
+  byID("remote-detail-back").focus();
+}
+
+function closeRollout() {
+  ++selectionVersion;
+  byID("back-to-list").hidden = true;
+  byID("remote-detail").hidden = true;
+  byID("remote-detail-metadata").textContent = "";
+  renderRolloutList();
+  showRolloutList();
+  updateRefreshLabel();
+}
+
 async function openRollout(rolloutID) {
+  const version = ++selectionVersion;
+  selectedRollout = rolloutID;
   byID("load-status").className = "notice";
   byID("load-status").textContent = "Loading rollout…";
   byID("load-error").hidden = true;
   try {
-    setSnapshot(await fetchSnapshot(fetch, rolloutID));
+    const snapshot = await fetchSnapshot(fetch, rolloutID);
+    if (version !== selectionVersion) return;
+    byID("remote-detail").hidden = true;
+    if (snapshot.unavailable) {
+      showUnavailableRollout(rolloutID, snapshot.metadata);
+      return;
+    }
+    setSnapshot(snapshot);
     byID("job-tabs").hidden = true;
     byID("rollout-list").hidden = true;
     byID("run-overview").hidden = true;
     byID("run-log").hidden = true;
     byID("back-to-list").hidden = false;
+    updateRefreshLabel();
     byID("main").focus();
   } catch (error) {
+    if (version !== selectionVersion) return;
     byID("load-status").className = "sr-only";
     byID("load-status").textContent = "";
     byID("load-error").hidden = false;
@@ -1032,12 +1083,18 @@ function refreshFilters() {
 // underneath it changing.
 const pollIntervalMs = 5000;
 let pollTimer = null;
+let pollBusy = false;
 
 function startPolling() {
   if (pollTimer !== null) return;
-  pollTimer = setInterval(() => {
-    pollForNewRollouts();
-    pollRunView();
+  pollTimer = setInterval(async () => {
+    if (pollBusy) return;
+    pollBusy = true;
+    try {
+      await Promise.all([pollForNewRollouts(), pollRunView()]);
+    } finally {
+      pollBusy = false;
+    }
   }, pollIntervalMs);
 }
 
@@ -1051,12 +1108,24 @@ function startPolling() {
 // usually the newest. Naming them fills the visible column in seconds instead
 // of after the whole backlog.
 async function refreshRolloutStates() {
+  if (realService()) return false;
   const states = await fetchRolloutStates(fetch, unclassifiedVisible());
   if (!states || !states.data) return false;
   const entries = Object.entries(states.data);
   if (entries.length === rolloutStates.size) return false;
   rolloutStates = new Map(entries);
   return true;
+}
+
+// Running rollouts on screen, which a real-service monitor refreshes sooner
+// than the rest. Null outside that mode, so other monitors see no new query.
+function watchedRunning() {
+  if (!realService()) return null;
+  if (!rolloutIndex || byID("rollout-list").hidden) return [];
+  return visibleEntries()
+    .filter((entry) => remoteRolloutState(entry) === "running")
+    .slice(-WATCH_LIMIT)
+    .map((entry) => entry.rollout_id);
 }
 
 function unclassifiedVisible() {
@@ -1082,13 +1151,14 @@ async function pollForNewRollouts() {
     : "";
   let update;
   try {
-    update = await fetchRolloutIndex(fetch, last);
-  } catch {
+    update = await fetchRolloutIndex(fetch, last, watchedRunning());
+  } catch (error) {
+    if (realService()) showRemoteError(error);
     // A poll that cannot reach the monitor is not worth reporting: the rollouts
     // already listed are still valid, and the next tick retries.
     return;
   }
-  if (!update || !update.data || update.data.length === 0) {
+  if (!update || !update.data || (update.data.length === 0 && !update.reset)) {
     if (grew && !byID("rollout-list").hidden) renderRolloutList();
     return;
   }
@@ -1392,12 +1462,19 @@ function renderRunCharts() {
 // view show a measurement the environment does not report, without the rollouts
 // having to be loaded a second time.
 function runRows() {
-  return withGroupSignal(runMetrics, rolloutIndex?.data ?? []);
+  return realService() ? runMetrics : withGroupSignal(runMetrics, rolloutIndex?.data ?? []);
 }
 
 function renderRunProgress() {
   const steps = runMetrics.length;
   const maxSteps = runOverview?.config?.max_steps;
+  if (realService()) {
+    const last = runMetrics.at(-1)?.step;
+    byID("run-progress").textContent = isNumber(last)
+      ? `· last reported step ${last}${isNumber(maxSteps) ? ` · configured max steps ${maxSteps}` : ""}`
+      : "· waiting for metrics";
+    return;
+  }
   byID("run-progress").textContent = steps === 0
     ? "· no steps yet"
     : isNumber(maxSteps) ? `· step ${steps} of ${maxSteps}` : `· ${count(steps)} steps`;
@@ -1433,11 +1510,13 @@ async function loadRunView() {
   let overview;
   try {
     overview = await fetchRunOverview();
-  } catch {
+  } catch (error) {
+    if (realService()) showRemoteError(error);
     return false;
   }
   if (!overview || !overview.run) return false;
   runOverview = overview.run;
+  if (realService()) applyRemoteOverview(overview);
   await refreshRunMetrics();
   renderRunView();
   return true;
@@ -1447,19 +1526,26 @@ async function refreshRunMetrics() {
   try {
     const metrics = await fetchRunMetrics();
     if (metrics && Array.isArray(metrics.data)) runMetrics = metrics.data;
-  } catch {
+  } catch (error) {
+    if (realService()) showRemoteError(error);
     // The rollouts are still worth showing; the next poll retries.
   }
 }
 
 async function pollRunView() {
-  if (!runOverview || !byID("snapshot").hidden) return;
+  if (!runOverview) return;
+  // The service banner stays current while a rollout is open; the charts wait.
+  const inSnapshot = !byID("snapshot").hidden;
+  if (inSnapshot && !realService()) return;
   try {
     const overview = await fetchRunOverview();
     if (overview && overview.run) runOverview = overview.run;
-  } catch {
+    if (realService()) applyRemoteOverview(overview);
+  } catch (error) {
+    if (realService()) showRemoteError(error);
     return;
   }
+  if (inSnapshot) return;
   await refreshRunMetrics();
   // Metrics are kept current whichever tab is up, so switching to the charts
   // shows the run as it is now rather than as it was when the tab was left.
@@ -1471,6 +1557,7 @@ async function pollRunView() {
 // by far, and a background tab polling it would cost more than everything else
 // on the page put together.
 async function refreshRunLog() {
+  if (realService()) return;
   if (byID("run-log").hidden) return;
   try {
     appendRunLog(await fetchRunLog(fetch, runLogOffset));
@@ -1487,6 +1574,14 @@ async function load() {
   try {
     rolloutIndex = await fetchRolloutIndex();
     if (rolloutIndex) {
+      if (realService()) {
+        document.body.classList.add("rle");
+        byID("list-step-header").textContent = byID("list-step-label").textContent = "Checkpoint";
+        byID("tab-logs").hidden = true;
+        byID("tab-metrics").textContent = "Summary";
+        byID("remote-controls").hidden = false;
+        if (activeJobTab === "logs") activeJobTab = "metrics";
+      }
       await refreshRolloutStates();
       refreshFilters();
       renderRolloutList();
@@ -1509,13 +1604,73 @@ async function load() {
   }
 }
 
-byID("back-button").addEventListener("click", () => {
-  byID("back-to-list").hidden = true;
-  renderRolloutList();
-  showRolloutList();
-});
+byID("back-button").addEventListener("click", closeRollout);
+byID("remote-detail-back").addEventListener("click", closeRollout);
 byID("list-split").addEventListener("change", renderRolloutList);
 byID("list-step").addEventListener("change", renderRolloutList);
+
+function applyRemoteOverview(overview) {
+  const notes = remoteRunNotices(overview);
+  byID("remote-status").hidden = notes.length === 0;
+  byID("remote-status").textContent = notes.join(" ");
+}
+
+function showRemoteError(error) {
+  byID("remote-status").hidden = false;
+  byID("remote-status").textContent = `Showing previously loaded data. ${error.message}`;
+}
+
+function rolloutOpen() {
+  return Boolean(selectedRollout) && (!byID("snapshot").hidden || !byID("remote-detail").hidden);
+}
+
+function updateRefreshLabel() {
+  byID("remote-refresh").textContent = rolloutOpen() ? "Refresh rollout" : "Refresh service data";
+}
+
+byID("remote-refresh").addEventListener("click", async () => {
+  const button = byID("remote-refresh");
+  const status = byID("remote-status");
+  button.disabled = true;
+  status.hidden = false;
+  // With a rollout open, refresh means that rollout: the job keeps polling on its own.
+  if (rolloutOpen()) {
+    status.textContent = "Refreshing rollout...";
+    try {
+      await openRollout(selectedRollout);
+      if (byID("load-error").hidden) {
+        status.textContent = `Rollout refreshed at ${new Date().toLocaleTimeString()}.`;
+      } else {
+        status.textContent = "Rollout refresh failed; showing previously loaded data.";
+      }
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  status.textContent = "Refreshing service data...";
+  try {
+    const response = await fetch("/api/refresh", { method: "POST", credentials: "same-origin" });
+    if (!response.ok) throw new Error(`Refresh failed (HTTP ${response.status}).`);
+    // 202 means the cycle outlasted the wait; the regular polls pick it up.
+    const finished = response.status !== 202;
+    const overview = await fetchRunOverview();
+    if (overview && overview.run) runOverview = overview.run;
+    applyRemoteOverview(overview);
+    await refreshRunMetrics();
+    if (!byID("run-overview").hidden) renderRunView();
+    if (byID("snapshot").hidden) await pollForNewRollouts();
+    const note = finished
+      ? `Service data refreshed at ${new Date().toLocaleTimeString()}.`
+      : "Service refresh is still running; the page will update when it finishes.";
+    status.hidden = false;
+    status.textContent = status.textContent ? `${status.textContent} ${note}` : note;
+  } catch (error) {
+    showRemoteError(error);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 byID("retry").addEventListener("click", load);
 byID("final-response-toggle").addEventListener("click", () => {

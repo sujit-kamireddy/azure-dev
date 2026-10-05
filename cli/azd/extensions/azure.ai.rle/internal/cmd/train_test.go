@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"azure.ai.rle/internal/monitor"
 	"azure.ai.rle/internal/project"
-	"azure.ai.rle/internal/rollouts"
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 )
 
@@ -243,6 +243,15 @@ func TestNormalizeFinetuneEndpointRejectsNonHTTPS(t *testing.T) {
 }
 
 func TestFinetuneClientSendsProjectHeadersAndAuthenticates(t *testing.T) {
+	for _, wantOverride := range []string{"", "math_rl:1.0.8"} {
+		t.Run("override="+wantOverride, func(t *testing.T) {
+			t.Setenv(rleEnvOverrideEnvVar, wantOverride)
+			testFinetuneClientHeaders(t, wantOverride)
+		})
+	}
+}
+
+func testFinetuneClientHeaders(t *testing.T, wantOverride string) {
 	credential := &testTokenCredential{}
 	client := newFinetuneClientWithCredential("https://resource.openai.azure.com", credential)
 	client.httpClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -260,6 +269,9 @@ func TestFinetuneClientSendsProjectHeadersAndAuthenticates(t *testing.T) {
 		}
 		if got := request.Header.Get("azureai-project-is-default"); got != "true" {
 			t.Fatalf("expected azureai-project-is-default=true, got %q", got)
+		}
+		if got := request.Header.Get(rleEnvOverrideHeader); got != wantOverride {
+			t.Fatalf("expected %s=%q, got %q", rleEnvOverrideHeader, wantOverride, got)
 		}
 		return &http.Response{
 			StatusCode: http.StatusCreated,
@@ -281,6 +293,7 @@ func TestFinetuneClientSendsProjectHeadersAndAuthenticates(t *testing.T) {
 }
 
 func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
+	stubAPIJobMonitor(t)
 	trainingFilePath := filepath.Join(t.TempDir(), "training.jsonl")
 	if err := os.WriteFile(trainingFilePath, []byte("{\"input\":\"example\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -318,7 +331,7 @@ func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
 			}
 			return &http.Response{
 				StatusCode: http.StatusCreated,
-				Body:       io.NopCloser(strings.NewReader(`{"id":"ftjob-1","status":"queued"}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"id":"` + realMonitorJobID + `","status":"queued"}`)),
 				Header:     make(http.Header),
 			}, nil
 		default:
@@ -361,7 +374,7 @@ func TestTrainActionUploadsLocalFileBeforeSubmittingJob(t *testing.T) {
 	if !strings.Contains(output.String(), "Uploaded training file as file-training.") {
 		t.Fatalf("expected upload progress output, got %q", output.String())
 	}
-	if !strings.Contains(output.String(), "Submitted fine-tuning job ftjob-1") {
+	if !strings.Contains(output.String(), "Submitted fine-tuning job "+realMonitorJobID) {
 		t.Fatalf("expected job output, got %q", output.String())
 	}
 }
@@ -494,6 +507,7 @@ func TestTrainCommandNoLongerRequiresRleFlags(t *testing.T) {
 // creation, and returns the action alongside the buffer it writes to.
 func stubbedTrain(t *testing.T, ctx context.Context, flags *rleTrainFlags) (*trainAction, *bytes.Buffer) {
 	t.Helper()
+	t.Setenv(rleTrainEndpointEnvVar, "https://facade.example.com")
 	trainingFilePath := filepath.Join(t.TempDir(), "training.jsonl")
 	if err := os.WriteFile(trainingFilePath, []byte("{\"input\":\"example\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -511,7 +525,7 @@ func stubbedTrain(t *testing.T, ctx context.Context, flags *rleTrainFlags) (*tra
 		}
 		body := `{"id":"file-training","status":"processed"}`
 		if request.URL.Path == finetuneJobsPath {
-			body = `{"id":"ftjob-1","status":"queued"}`
+			body = `{"id":"` + realMonitorJobID + `","status":"queued"}`
 		}
 		return &http.Response{
 			StatusCode: http.StatusCreated,
@@ -537,32 +551,6 @@ func stubbedTrain(t *testing.T, ctx context.Context, flags *rleTrainFlags) (*tra
 	return &trainAction{cmd: command, flags: flags}, output
 }
 
-// Without --follow the command exits, so there is no dashboard to serve. The
-// rollout ids a run generates are not knowable ahead of time, so the job id is
-// the only way back to them and has to be offered.
-func TestTrainNamesTheMonitorCommandWhenItIsNotFollowing(t *testing.T) {
-	action, output := stubbedTrain(t, context.Background(), &rleTrainFlags{})
-	if err := action.Run(); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), "azd ai rle monitor --job-id ftjob-1") {
-		t.Fatalf("output = %q, want the command that opens this run's rollouts", output.String())
-	}
-}
-
-// An endpoint the run needed is an endpoint the monitor needs, so a pasted
-// command has to carry it.
-func TestTrainCarriesTheEndpointIntoTheMonitorCommand(t *testing.T) {
-	action, output := stubbedTrain(t, context.Background(),
-		&rleTrainFlags{endpoint: "https://account.openai.azure.com"})
-	if err := action.Run(); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), "--job-id ftjob-1 --endpoint https://account.openai.azure.com") {
-		t.Fatalf("output = %q, want the endpoint carried into the monitor command", output.String())
-	}
-}
-
 // The point of following a run is watching its rollouts land, so the dashboard
 // runs alongside the stream rather than after it, and outlives it: the run
 // ending is when the rollouts are finally all there to read.
@@ -571,18 +559,14 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 	defer cancel()
 
 	started := make(chan string, 1)
-	monitored := make(chan string, 1)
-	originalMonitor := runJobMonitor
-	runJobMonitor = func(
-		ctx context.Context, _ rollouts.Reader, _ rollouts.Lister,
-		jobID string, runDir string, _ bool, _, _ io.Writer,
+	stubAPIJobMonitor(t)
+	runAPIJobMonitor = func(
+		ctx context.Context, _ monitor.JobSource, jobID string, _ bool, _, _ io.Writer,
 	) error {
 		started <- jobID
-		monitored <- runDir
 		<-ctx.Done()
 		return nil
 	}
-	t.Cleanup(func() { runJobMonitor = originalMonitor })
 
 	streamed := make(chan struct{})
 	originalFollow := followTrainingRunFunc
@@ -603,17 +587,11 @@ func TestTrainFollowServesTheRolloutDashboardUntilItIsStopped(t *testing.T) {
 
 	select {
 	case jobID := <-started:
-		if jobID != "ftjob-1" {
+		if jobID != realMonitorJobID {
 			t.Fatalf("dashboard opened %q, want the submitted job", jobID)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("--follow did not start the job monitor")
-	}
-
-	// The dashboard must read the same directory the stream writes, or it would
-	// show a run with no metrics while they are being downloaded beside it.
-	if runDir := <-monitored; runDir != filepath.Join(logsRoot, "rle-harness", "ftjob-1") {
-		t.Fatalf("dashboard read %q, want the run mirror --follow writes", runDir)
 	}
 
 	<-streamed

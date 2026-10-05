@@ -13,14 +13,18 @@ import (
 
 // Response describes the fields used by the CLI; Raw retains the complete service response.
 type Response struct {
-	RolloutID     string          `json:"rollout_id"`
-	Rollout       json.RawMessage `json:"rollout"`
-	FinalResponse *string         `json:"final_response,omitempty"`
-	Reward        float64         `json:"reward"`
-	Success       *bool           `json:"success,omitempty"`
-	Result        json.RawMessage `json:"result,omitempty"`
-	Episode       *Episode        `json:"episode,omitempty"`
-	Raw           json.RawMessage `json:"-"`
+	RolloutID    string          `json:"rollout_id"`
+	RolloutGraph json.RawMessage `json:"rollout_graph"`
+	// RolloutGraphLegacy supports RLE services that have not yet picked up the
+	// rollout -> rollout_graph rename. UnmarshalJSON folds it into
+	// RolloutGraph when that one is absent, so callers only ever read RolloutGraph.
+	RolloutGraphLegacy json.RawMessage `json:"rollout,omitempty"`
+	FinalResponse      *string         `json:"final_response,omitempty"`
+	Reward             float64         `json:"reward"`
+	Success            *bool           `json:"success,omitempty"`
+	Result             json.RawMessage `json:"result,omitempty"`
+	Episode            *Episode        `json:"episode,omitempty"`
+	Raw                json.RawMessage `json:"-"`
 }
 
 // Episode contains Gym/OpenEnv annotations, not a task-level success verdict.
@@ -46,6 +50,10 @@ func (r *Response) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("decode rollout response: %w", err)
 	}
 	*r = Response(decoded)
+	if len(r.RolloutGraph) == 0 {
+		r.RolloutGraph = r.RolloutGraphLegacy
+	}
+	r.RolloutGraphLegacy = nil
 	r.Raw = append(json.RawMessage(nil), data...)
 	return nil
 }

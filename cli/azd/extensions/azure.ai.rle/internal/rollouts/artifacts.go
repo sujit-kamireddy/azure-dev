@@ -126,7 +126,7 @@ func (r ArtifactReader) Get(ctx context.Context, rolloutID string) (Snapshot, er
 		if err := json.Unmarshal(graph, &fields); err != nil || fields == nil {
 			return Snapshot{}, fmt.Errorf("invalid capture graph in %s: expected a JSON object", directory)
 		}
-		response["rollout"] = graph
+		response["rollout_graph"] = graph
 	case errors.Is(err, os.ErrNotExist) && (metadata == nil || !metadata.HasGraph):
 		snapshot.Warnings = append(snapshot.Warnings,
 			"Capture graph is unavailable; showing only the saved summary.")

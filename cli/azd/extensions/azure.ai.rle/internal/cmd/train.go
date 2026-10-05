@@ -4,10 +4,12 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -60,7 +62,16 @@ training file to the fine-tuning resource before Loom mounts it as the job input
 is currently hidden from finetunesapi's public API surface and only completes for base models
 enabled for Loom-backed RL-environment training. Job creation fails if the base model is not
 enabled, or if the RLE version is not published and ready in the project set by
-FOUNDRY_PROJECT_ENDPOINT.`,
+FOUNDRY_PROJECT_ENDPOINT.
+
+train always opens a local monitor after submission and stays running until
+Ctrl+C (including in non-interactive runs). The monitor reads RLE APIs into
+memory; no training files are mirrored locally. Ctrl+C stops monitoring, not
+the remote job. Use --no-browser to open the link manually.
+
+Add --follow to also stream the run's logs and metrics to a local mirror
+(--logs-root) while the monitor is open, in the layout the Loom dashboard
+reads.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return (&trainAction{cmd: cmd, flags: flags}).Run()
@@ -82,12 +93,12 @@ FOUNDRY_PROJECT_ENDPOINT.`,
 	cmd.Flags().IntVar(&flags.maxEpisodeSteps, "max-episode-steps", 0,
 		"Maximum steps the RLE executes per rollout (0 uses the service default).")
 	cmd.Flags().BoolVar(&flags.follow, "follow", false,
-		"Stream the run's logs and metrics locally until the job finishes, in the layout "+
-			"the Loom dashboard reads, and serve the run's rollouts in a local dashboard.")
+		"Also stream the run's logs and metrics locally until the job finishes, in the layout "+
+			"the Loom dashboard reads, while the job monitor is open.")
 	cmd.Flags().StringVar(&flags.logsRoot, "logs-root", "",
 		"Where --follow writes mirrored runs. Defaults to $LOOM_LOGS_ROOT, else ~/loom-runs.")
 	cmd.Flags().BoolVar(&flags.noBrowser, "no-browser", false,
-		"With --follow, print the job monitor address without opening a browser.")
+		"Print the job monitor address without opening a browser.")
 	cmd.Flags().IntVar(&flags.taskCount, "task-count", 0,
 		"Train on only the first N tasks of the training dataset, for a smaller run. "+
 			"Sets the max_train_examples training option (0 uses the whole dataset).")
@@ -233,6 +244,9 @@ func (a *trainAction) Run() error {
 	if err != nil {
 		return err
 	}
+	if err := rejectRealMonitorFlags(a.cmd, "output"); err != nil {
+		return err
+	}
 	azureAIProject, err := projectRouteSegment(projectEndpoint)
 	if err != nil {
 		return err
@@ -306,25 +320,16 @@ func (a *trainAction) Run() error {
 		return err
 	}
 
+	ctx, stop := signal.NotifyContext(a.cmd.Context(), os.Interrupt)
+	defer stop()
 	if a.flags.follow {
-		return a.followJob(client, job.Id)
+		return a.followJob(ctx, client, projectEndpoint, job.Id)
 	}
-
-	// Without --follow the command is about to exit, so there is nothing to
-	// serve a dashboard from. Name the command that opens one instead: the
-	// rollout ids a run generates are not knowable ahead of time, so the job id
-	// is the only way back to them.
-	monitorEndpoint := strings.TrimSpace(a.flags.endpoint)
-	if monitorEndpoint != "" {
-		monitorEndpoint = fmt.Sprintf(" --endpoint %s", monitorEndpoint)
-	}
-	if _, err := fmt.Fprintf(
-		a.cmd.OutOrStdout(),
-		"\nWatch this run's rollouts as they land:\n  azd ai rle monitor --job-id %s%s\n",
-		job.Id,
-		monitorEndpoint,
-	); err != nil {
-		return err
+	if err := runRealJobMonitor(ctx, a.cmd, projectEndpoint, client, job.Id, a.flags.noBrowser); err != nil {
+		return fmt.Errorf(
+			"job %s was accepted, but monitoring failed; reopen with azd ai rle monitor --job-id %s: %w",
+			job.Id, job.Id, err,
+		)
 	}
 	return nil
 }
@@ -335,8 +340,10 @@ func (a *trainAction) Run() error {
 // A streaming failure is reported but does not fail the command: the job was
 // accepted and is running on the service, and exiting non-zero would suggest it
 // was not. The job id is printed above, so it stays recoverable.
-func (a *trainAction) followJob(client *finetuneClient, jobID string) error {
-	authorization, err := client.authorizationHeader(a.cmd.Context())
+func (a *trainAction) followJob(
+	ctx context.Context, client *finetuneClient, projectEndpoint string, jobID string,
+) error {
+	authorization, err := client.authorizationHeader(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire a token for the run stream: %w", err)
 	}
@@ -348,20 +355,13 @@ func (a *trainAction) followJob(client *finetuneClient, jobID string) error {
 
 	// The dashboard runs alongside the stream rather than after it. A run
 	// records rollouts for as long as it lasts, and the point of following one
-	// is to watch them land, not to read them once it is over.
-	//
-	// It starts empty: the first rollout of a run takes minutes. The page polls,
-	// so rollouts appear as the run records them. It reads the same mirror the
-	// stream below writes, so the metrics and the log are the ones already being
-	// downloaded -- following a run fetches its artifacts once, not twice.
+	// is to watch them land, not to read them once it is over. It reads RLE
+	// APIs directly, so it does not depend on the local mirror the stream below
+	// writes -- following a run fetches its artifacts once, not twice.
 	dashboard := make(chan struct{})
 	go func() {
 		defer close(dashboard)
-		source := &jobRollouts{client: client, jobID: jobID}
-		if err := runJobMonitor(
-			a.cmd.Context(), source, source, jobID, runMirrorDir(logsRoot, jobID), a.flags.noBrowser,
-			a.cmd.OutOrStdout(), a.cmd.ErrOrStderr(),
-		); err != nil {
+		if err := runRealJobMonitor(ctx, a.cmd, projectEndpoint, client, jobID, a.flags.noBrowser); err != nil {
 			// The stream is the part that must keep working; a dashboard that
 			// cannot start is worth saying once and no more.
 			fmt.Fprintf(a.cmd.ErrOrStderr(), "The job monitor did not start: %v\n", err)
@@ -369,7 +369,7 @@ func (a *trainAction) followJob(client *finetuneClient, jobID string) error {
 	}()
 
 	status, streamErr := followTrainingRunFunc(
-		a.cmd.Context(),
+		ctx,
 		client.baseUrl,
 		authorization,
 		jobID,

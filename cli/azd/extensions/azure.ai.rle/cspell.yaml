@@ -13,6 +13,7 @@ words:
   - finetunesapi
   - GRPO
   - grpo
+  - optim
   - hyperparameters
   - rollouts
   # Container tooling.

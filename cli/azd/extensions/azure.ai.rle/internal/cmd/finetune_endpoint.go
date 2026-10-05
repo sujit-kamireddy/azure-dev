@@ -16,6 +16,13 @@ import (
 // Set it when an environment routes RLE jobs to a facade or mock service.
 const rleTrainEndpointEnvVar = "RLE_TRAIN_ENDPOINT"
 
+// RLE_ENV_OVERRIDE is a development aid. When set, train sends its value in the
+// rleEnvOverride header so the service runs the job against that RLE environment.
+const (
+	rleEnvOverrideEnvVar = "RLE_ENV_OVERRIDE"
+	rleEnvOverrideHeader = "rleEnvOverride"
+)
+
 // resolveFinetuneEndpoint picks the fine-tuning API the RLE commands talk to:
 // the --endpoint flag, then RLE_TRAIN_ENDPOINT, else the endpoint derived from
 // the Foundry project. All three RLE commands share it so that a job submitted

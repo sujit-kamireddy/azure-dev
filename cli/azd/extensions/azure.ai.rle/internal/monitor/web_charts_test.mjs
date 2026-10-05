@@ -44,7 +44,7 @@ test("prompt and sampled counts share one scale across calls and chart pages", (
 test("chart inputs preserve token zeros, missing counts, and step/call joins", () => {
   const response = { rollout_id: "chart-test", reward: 0,
     episode: { steps: [{ capture_node_id: "a", reward: -1 }, { reward: 0 }, {}] },
-    rollout: { capture_level: "tokens", turns: [
+    rollout_graph: { capture_level: "tokens", turns: [
       { node_id: "a", n_prompt: 0, n_sampled: 12 },
       { node_id: "a", n_prompt: 25 },
     ] } };
@@ -54,7 +54,7 @@ test("chart inputs preserve token zeros, missing counts, and step/call joins", (
   assert.deepEqual(model.steps[0].turnPositions, [0, 1]);
   assert.deepEqual(model.turns.map((turn) => turn.stepNumbers), [[1], [1]]);
   assert.deepEqual(chartScales(model.steps, model.turns), { reward: 1, tokens: 25 });
-  response.rollout.capture_level = "metadata";
+  response.rollout_graph.capture_level = "metadata";
   const metadata = mapSnapshot({ source: "test", response });
   assert.equal(metadata.turns.every((turn) => turn.prompt === null && turn.sampled === null), true);
   assert.equal(chartScales(metadata.steps, metadata.turns).tokens, 0);

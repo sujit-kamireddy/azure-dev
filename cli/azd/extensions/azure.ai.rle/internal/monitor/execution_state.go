@@ -72,7 +72,12 @@ func classifyExecution(response json.RawMessage) executionState {
 		Result struct {
 			AgentResponse string `json:"agent_response"`
 		} `json:"result"`
-		Rollout struct {
+		RolloutGraph struct {
+			Turns []json.RawMessage `json:"turns"`
+		} `json:"rollout_graph"`
+		// RolloutGraphLegacy supports RLE services that have not yet picked up
+		// the rollout -> rollout_graph rename.
+		RolloutGraphLegacy struct {
 			Turns []json.RawMessage `json:"turns"`
 		} `json:"rollout"`
 	}
@@ -85,7 +90,11 @@ func classifyExecution(response json.RawMessage) executionState {
 		kind, message := exceptionFromTraceback(body.Result.AgentResponse)
 		return executionState{State: executionFailed, Error: kind, Detail: message}
 	}
-	if body.Rollout.Turns != nil && len(body.Rollout.Turns) == 0 {
+	turns := body.RolloutGraph.Turns
+	if turns == nil {
+		turns = body.RolloutGraphLegacy.Turns
+	}
+	if turns != nil && len(turns) == 0 {
 		return executionState{
 			State:  executionFailed,
 			Error:  "No model calls",
