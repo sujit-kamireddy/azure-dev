@@ -528,24 +528,65 @@ func TestRemoteRolloutCacheKeepsNewestRows(t *testing.T) {
 }
 
 func TestRemoteCompletionPausesAndRefreshResumes(t *testing.T) {
-	reader := newMemoryJobSource()
-	reader.status = "succeeded"
-	reader.entry.Status, reader.entry.ResultAvailable = "completed", true
-	j := newRemoteJob(reader, remoteTestJob)
-	now := remoteTestTime
-	j.refresh(t.Context(), now, false)
-	j.refresh(t.Context(), now.Add(time.Minute), false)
-	if j.paused != pausedCompleted {
-		t.Fatal("terminal settling and reconciliation did not pause polling")
+	for _, status := range []string{"succeeded", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			reader := newMemoryJobSource()
+			reader.status = status
+			reader.entry.Status, reader.entry.ResultAvailable = "completed", true
+			j := newRemoteJob(reader, remoteTestJob)
+			now := remoteTestTime
+			j.refresh(t.Context(), now, false)
+			if j.terminalAt != now || j.status != status || j.paused != "" {
+				t.Fatal("terminal status was not preserved or paused before settling")
+			}
+			handler, err := newHandler(source{remote: j, jobID: remoteTestJob}, testHost)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := remoteRequest(t, handler, "GET", "/api/run")
+			var run struct {
+				Run struct {
+					Config struct {
+						MaxSteps int `json:"max_steps"`
+					} `json:"config"`
+					Meta struct {
+						Status string `json:"status"`
+					} `json:"meta"`
+				} `json:"run"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &run); err != nil ||
+				run.Run.Meta.Status != status || run.Run.Config.MaxSteps != 60 {
+				t.Fatalf("dashboard did not preserve root config and raw status: %s err=%v", response.Body, err)
+			}
+			j.refresh(t.Context(), now.Add(time.Minute), false)
+			if j.paused != pausedCompleted || reader.statusCalls != 1 {
+				t.Fatal("terminal settling and reconciliation did not pause polling")
+			}
+			calls := reader.metricCalls
+			j.refresh(t.Context(), now.Add(2*time.Minute), false)
+			if reader.metricCalls != calls {
+				t.Fatal("paused monitor still polled")
+			}
+			j.refresh(t.Context(), now.Add(2*time.Minute), true)
+			if reader.metricCalls == calls || j.paused != "" {
+				t.Fatal("manual refresh did not resume")
+			}
+		})
 	}
-	calls := reader.metricCalls
-	j.refresh(t.Context(), now.Add(2*time.Minute), false)
-	if reader.metricCalls != calls {
-		t.Fatal("paused monitor still polled")
-	}
-	j.refresh(t.Context(), now.Add(2*time.Minute), true)
-	if reader.metricCalls == calls || j.paused != "" {
-		t.Fatal("manual refresh did not resume")
+}
+
+func TestRemoteNonTerminalStatusKeepsPolling(t *testing.T) {
+	for _, status := range []string{"running", "queued", "completed", "canceled", "custom_state", "Completed", " completed "} {
+		t.Run(status, func(t *testing.T) {
+			reader := newMemoryJobSource()
+			reader.status = status
+			j := newRemoteJob(reader, remoteTestJob)
+			j.refresh(t.Context(), remoteTestTime, false)
+			j.refresh(t.Context(), remoteTestTime.Add(time.Minute), false)
+			if !j.terminalAt.IsZero() || j.paused != "" || j.status != status || reader.statusCalls != 2 {
+				t.Fatal("nonterminal status was coerced or stopped polling")
+			}
+		})
 	}
 }
 

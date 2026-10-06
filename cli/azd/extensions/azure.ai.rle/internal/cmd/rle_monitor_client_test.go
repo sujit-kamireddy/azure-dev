@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,24 +85,79 @@ func TestTrainAndMonitorUseTheSameAPIBackendRegardlessOfEndpoint(t *testing.T) {
 }
 
 func TestRleJobStatusReadContract(t *testing.T) {
+	id := `"id":"` + realMonitorJobID + `"`
+	legacyID := `"job_id":"` + realMonitorJobID + `"`
+	config := `{"model_name":"sample","max_steps":100}`
+	envelope := `{` + id + `,"status":"succeeded","metadata":` + config + `}`
 	for _, tc := range []struct {
-		name   string
-		body   string
-		code   int
-		want   string
-		hasErr bool
+		name, body, want, config string
+		code                     int
 	}{
-		{"running", `{"job_id":"` + realMonitorJobID + `","status":"running"}`, 200, "running", false},
-		{"terminal", `{"job_id":"` + realMonitorJobID + `","status":"succeeded"}`, 200, "succeeded", false},
-		{"missing status", `{"job_id":"` + realMonitorJobID + `"}`, 200, "", true},
-		{"blank status", `{"job_id":"` + realMonitorJobID + `","status":" "}`, 200, "", true},
-		{"wrong job", `{"job_id":"other","status":"running"}`, 200, "", true},
-		{"unregistered", `{"code":"JobNotFound"}`, 404, "", true},
-		{"throttled", `{"code":"TooManyRequests"}`, 429, "", true},
+		{"new envelope", envelope, "succeeded", config, 200},
+		{"new running", `{` + id + `,"status":"running","metadata":{}}`, "running", `{}`, 200},
+		{"completed", `{` + id + `,"status":"completed","metadata":{}}`, "completed", `{}`, 200},
+		{"raw status", `{` + id + `,"status":"custom_state","metadata":{}}`, "custom_state", `{}`, 200},
+		{"metadata status is opaque", `{` + id + `,"status":"running","metadata":{"status":42}}`,
+			"running", `{"status":42}`, 200},
+		{"no configuration unwrap", `{` + id + `,"status":"running","metadata":{"configuration":` + config + `}}`,
+			"running", `{"configuration":` + config + `}`, 200},
+		{"root config is not authoritative", `{` + id +
+			`,"status":"running","model_name":"wrong","max_steps":1,"metadata":` + config + `}`,
+			"running", config, 200},
+		{"legacy id is ignored", `{` + id + `,` + legacyID + `,"status":"running","metadata":` + config + `}`,
+			"running", config, 200},
+		{"legacy running is rejected", `{` + legacyID + `,"status":"running"}`, "", "", 200},
+		{"legacy config", `{` + legacyID + `,"status":"succeeded","model_name":"sample","max_steps":100}`,
+			"", "", 200},
+		{"legacy opaque metadata", `{` + legacyID + `,"status":"running","metadata":null}`,
+			"", "", 200},
+		{"legacy id with valid metadata is rejected", `{` + legacyID + `,"status":"running","metadata":` + config + `}`,
+			"", "", 200},
+		{"missing status", `{` + id + `,"metadata":{}}`, "", "", 200},
+		{"blank status", `{` + id + `,"status":" ","metadata":{}}`, "", "", 200},
+		{"null status", `{` + id + `,"status":null,"metadata":{}}`, "", "", 200},
+		{"numeric status", `{` + id + `,"status":42,"metadata":{}}`, "", "", 200},
+		{"object status", `{` + id + `,"status":{},"metadata":{}}`, "", "", 200},
+		{"array status", `{` + id + `,"status":[],"metadata":{}}`, "", "", 200},
+		{"boolean status", `{` + id + `,"status":true,"metadata":{}}`, "", "", 200},
+		{"metadata status cannot replace status", `{` + id + `,"metadata":{"status":"succeeded"}}`, "", "", 200},
+		{"wrong new job", `{"id":"ftjob-000000000000000000000000","status":"running","metadata":{}}`, "", "", 200},
+		{"missing identity", `{"status":"running","metadata":{}}`, "", "", 200},
+		{"null id cannot fall back", `{"id":null,` + legacyID + `,"status":"running","metadata":{}}`, "", "", 200},
+		{"blank id cannot fall back", `{"id":"",` + legacyID + `,"status":"running","metadata":{}}`, "", "", 200},
+		{"numeric id cannot fall back", `{"id":42,` + legacyID + `,"status":"running","metadata":{}}`, "", "", 200},
+		{"object id", `{"id":{},"status":"running","metadata":{}}`, "", "", 200},
+		{"array id", `{"id":[],"status":"running","metadata":{}}`, "", "", 200},
+		{"boolean id", `{"id":true,"status":"running","metadata":{}}`, "", "", 200},
+		{"conflicting legacy id is ignored", `{` + id + `,"job_id":"other","status":"running","metadata":{}}`,
+			"running", `{}`, 200},
+		{"wrong id cannot fall back", `{"id":"other",` + legacyID + `,"status":"running","metadata":{}}`, "", "", 200},
+		{"null legacy id is ignored", `{` + id + `,"job_id":null,"status":"running","metadata":{}}`,
+			"running", `{}`, 200},
+		{"numeric legacy id is ignored", `{` + id + `,"job_id":42,"status":"running","metadata":{}}`,
+			"running", `{}`, 200},
+		{"wrong legacy job", `{"job_id":"other","status":"running"}`, "", "", 200},
+		{"legacy missing status", `{` + legacyID + `}`, "", "", 200},
+		{"legacy blank status", `{` + legacyID + `,"status":" "}`, "", "", 200},
+		{"missing metadata cannot fall back", `{` + id + `,` + legacyID + `,"status":"running","model_name":"old"}`,
+			"", "", 200},
+		{"null metadata cannot fall back", `{` + id + `,` + legacyID + `,"status":"running","metadata":null}`,
+			"", "", 200},
+		{"array metadata", `{` + id + `,"status":"running","metadata":[]}`, "", "", 200},
+		{"string metadata", `{` + id + `,"status":"running","metadata":"{}"}`, "", "", 200},
+		{"numeric metadata", `{` + id + `,"status":"running","metadata":42}`, "", "", 200},
+		{"boolean metadata", `{` + id + `,"status":"running","metadata":true}`, "", "", 200},
+		{"null response", `null`, "", "", 200},
+		{"array response", `[]`, "", "", 200},
+		{"malformed response", `{`, "", "", 200},
+		{"unregistered", `{"code":"JobNotFound"}`, "", "", 404},
+		{"throttled", `{"code":"TooManyRequests"}`, "", "", 429},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			credential := &testTokenCredential{}
+			var calls atomic.Int32
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
 				if r.Method != http.MethodGet ||
 					r.URL.Path != "/api/projects/project/rl_environments/jobs/"+realMonitorJobID ||
 					r.URL.RawQuery != "api-version="+foundryAPIVersion {
@@ -119,11 +175,38 @@ func TestRleJobStatusReadContract(t *testing.T) {
 			rle.httpClient = server.Client()
 			source := &rleJobSource{rle: rle, jobID: realMonitorJobID}
 			status, err := source.Status(t.Context())
-			if (err != nil) != tc.hasErr || status != tc.want {
-				t.Fatalf("got status=%q err=%v, want status=%q error=%v", status, err, tc.want, tc.hasErr)
+			hasErr := tc.want == ""
+			if (err != nil) != hasErr || status != tc.want {
+				t.Fatalf("got status=%q err=%v, want status=%q error=%v", status, err, tc.want, hasErr)
+			}
+			raw, err := source.Config(t.Context())
+			if (err != nil) != hasErr || string(raw) != tc.config {
+				t.Fatalf("got config=%s err=%v, want config=%s error=%v", raw, err, tc.config, hasErr)
+			}
+			if got := calls.Load(); got != 2 {
+				t.Fatalf("status and config made %d requests, want one each", got)
 			}
 			if len(credential.scopes) != 1 || credential.scopes[0] != foundryTokenScope {
 				t.Fatalf("unexpected status token scopes %v", credential.scopes)
+			}
+		})
+	}
+}
+
+func TestRleJobRejectsInvalidRequestIdentity(t *testing.T) {
+	for _, id := range []string{"", "other", realMonitorJobID + "/metrics", " " + realMonitorJobID} {
+		t.Run("id="+id, func(t *testing.T) {
+			rle := newRleClientWithCredential("https://example.com", &testTokenCredential{})
+			rle.httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+				t.Fatal("invalid job identity must fail before a request")
+				return nil, errors.New("unexpected request")
+			})
+			source := &rleJobSource{rle: rle, jobID: id}
+			if status, err := source.Status(t.Context()); err == nil || status != "" {
+				t.Fatalf("got status=%q err=%v", status, err)
+			}
+			if config, err := source.Config(t.Context()); err == nil || config != nil {
+				t.Fatalf("got config=%s err=%v", config, err)
 			}
 		})
 	}
@@ -147,7 +230,8 @@ func TestRleMonitorClientRoutesAndScopes(t *testing.T) {
 		if req.Method != "GET" || req.URL.Query().Get("api-version") != foundryAPIVersion {
 			t.Fatalf("unexpected request %s", req.URL)
 		}
-		body := `{"job_id":"` + realMonitorJobID + `","model_name":"sample","status":"running"}`
+		body := `{"id":"` + realMonitorJobID +
+			`","status":"running","metadata":{"model_name":"sample","max_steps":100}}`
 		switch {
 		case strings.HasSuffix(req.URL.Path, "/metrics"):
 			if req.URL.Query().Get("lastStep") != "7" || req.URL.Query().Get("continuationToken") != "a+/=" {
@@ -166,8 +250,9 @@ func TestRleMonitorClientRoutesAndScopes(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
 	})
-	if _, err := s.Config(t.Context()); err != nil {
-		t.Fatal(err)
+	if config, err := s.Config(t.Context()); err != nil ||
+		string(config) != `{"model_name":"sample","max_steps":100}` {
+		t.Fatalf("dashboard config=%s err=%v", config, err)
 	}
 	page, err := s.Metrics(t.Context(), 7, "a+/=")
 	if err != nil || page.Next != "opaque" {

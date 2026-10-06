@@ -737,6 +737,14 @@ Submission still uses the fine-tuning service. Status, registration/config,
 metrics and rollout reads use the Foundry project's RLE service. Status uses
 `GET /rl_environments/jobs/{jobId}?api-version=2025-11-15-preview`,
 using the same API version as the other RLE reads.
+Only the new job envelope is supported: its top-level `id` must match the requested
+job, and its non-empty top-level `status` drives polling. The dashboard reads registered configuration
+directly from the `metadata` object, not from `metadata.configuration`.
+Invalid identities, missing/blank status, and missing/non-object metadata are
+reported as read errors. Legacy `job_id` responses and root-level configuration
+are not supported; `metadata.status` does not affect polling.
+Only `succeeded`, `failed`, and `cancelled` are treated as terminal job statuses,
+matching the fine-tuning API v1 contract.
 `monitor --job-id` no longer accepts `--endpoint`; `RLE_TRAIN_ENDPOINT` does not
 affect status polling, including the monitor opened by `train`.
 
