@@ -16,7 +16,7 @@
   metrics locally and open its job monitor: both now happen by default, the
   same way `rollout` already opens a dashboard by default. Pass `--no-follow`
   to skip both, submit the job, and exit immediately; the command always
-  prints `azd ai rle monitor --job-id <id>` so the job stays reopenable either
+  prints `azd ai rle monitor --job-id <id>` so the job can be reopened either
   way.
 
 - In the job monitor's rollout list, the first (sequence) column is no longer
