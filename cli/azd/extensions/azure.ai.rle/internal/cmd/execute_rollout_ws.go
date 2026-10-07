@@ -100,11 +100,13 @@ type executeRolloutHandshakeError struct {
 	statusCode int
 	body       string
 	cause      error
+	requestID  string
 }
 
 func (e *executeRolloutHandshakeError) Error() string {
 	if e.statusCode != 0 {
-		return fmt.Sprintf("Execute Rollout WebSocket upgrade failed with HTTP %d: %s", e.statusCode, e.body)
+		return withRequestID(
+			fmt.Sprintf("Execute Rollout WebSocket upgrade failed with HTTP %d: %s", e.statusCode, e.body), e.requestID)
 	}
 	return fmt.Sprintf("Execute Rollout WebSocket upgrade failed: %v", e.cause)
 }
@@ -123,6 +125,7 @@ func newExecuteRolloutHandshakeError(cause error, response *http.Response) *exec
 			result.body = strings.TrimSpace(string(body))
 		}
 	}
+	result.requestID = serviceRequestID(response.Header, []byte(result.body))
 	return result
 }
 
