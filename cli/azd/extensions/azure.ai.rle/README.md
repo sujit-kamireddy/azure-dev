@@ -462,6 +462,9 @@ identity and defaults. The pushed ACR image is version-tagged as:
 
 The published request includes `type`, `subtype`, the applicable HostedAgent
 or BYOH configuration, schema version, and defaults from the manifest.
+The success message identifies the release by name and version, for example
+`Published environment 'math_rl' version 1.0.0`. The JSON details printed
+afterward still include `environmentId`.
 
 ## Inspect and run releases
 
@@ -478,6 +481,12 @@ the current manifest:
 azd ai rle show code_rl
 azd ai rle show
 ```
+
+The list table displays `NAME`, `VERSION`, `TYPE`, `SUBTYPE`, `DISK IMAGE`,
+and `UPDATED`; show displays the same columns without `NAME`. Missing type,
+subtype, or disk image conversion status is shown as `-`, not inferred as
+ready. Use `--output json` with either command for full details, including
+environment IDs, images, and defaults.
 
 Execute one Loom-backed rollout of the manifest's exact `(name, version)`
 identity, using the model declared in `[defaults.model]`:
