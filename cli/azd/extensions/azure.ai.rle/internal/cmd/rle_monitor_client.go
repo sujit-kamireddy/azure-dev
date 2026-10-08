@@ -24,7 +24,6 @@ import (
 // Fine-tuning job IDs carry 24 or 32 lowercase hexadecimal characters.
 var rleJobIDPattern = regexp.MustCompile(`^ftjob-(?:[0-9a-f]{24}|[0-9a-f]{32})$`)
 var monitorErrorCodePattern = regexp.MustCompile(`^[A-Za-z0-9_]{1,80}$`)
-var monitorCorrelationPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
 
 type rleJobSource struct {
 	rle   *rleClient
@@ -235,19 +234,16 @@ func monitorErrorDetails(resp *http.Response, fallback string) (code, operation,
 		} else if monitorErrorCodePattern.MatchString(body.Code) {
 			code = body.Code
 		}
-		if monitorCorrelationPattern.MatchString(body.Correlation.Operation) {
+		if correlationIDPattern.MatchString(body.Correlation.Operation) {
 			operation = body.Correlation.Operation
 		}
 		request = body.Correlation.Request
 	}
-	for _, header := range []string{"x-ms-request-id", "apim-request-id", "x-request-id"} {
-		if value := resp.Header.Get(header); value != "" {
-			request = value
-			break
-		}
-	}
-	if !monitorCorrelationPattern.MatchString(request) {
+	if !correlationIDPattern.MatchString(request) {
 		request = ""
+	}
+	if headerRequest := serviceRequestID(resp.Header, nil); headerRequest != "" {
+		request = headerRequest
 	}
 	return code, operation, request
 }

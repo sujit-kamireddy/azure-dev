@@ -97,6 +97,7 @@ type rleHTTPError struct {
 	statusCode int
 	body       string
 	details    *rleErrorBody
+	requestID  string
 }
 
 type rleErrorBody struct {
@@ -106,7 +107,7 @@ type rleErrorBody struct {
 }
 
 func (e *rleHTTPError) Error() string {
-	return fmt.Sprintf("RLE service returned HTTP %d: %s", e.statusCode, e.message())
+	return withRequestID(fmt.Sprintf("RLE service returned HTTP %d: %s", e.statusCode, e.message()), e.requestID)
 }
 
 func (e *rleHTTPError) code() string {
@@ -134,6 +135,7 @@ func newRleHTTPError(statusCode int, body []byte) *rleHTTPError {
 	result := &rleHTTPError{
 		statusCode: statusCode,
 		body:       string(body),
+		requestID:  serviceRequestID(nil, body),
 	}
 	var details rleErrorBody
 	if err := json.Unmarshal(body, &details); err == nil {
@@ -357,11 +359,13 @@ func (c *rleClient) doWithHeaders(
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read RLE response: %w", err)
+		return withRequestIDError(fmt.Errorf("read RLE response: %w", err), serviceRequestID(resp.Header, nil))
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return newRleHTTPError(resp.StatusCode, respBody)
+		httpErr := newRleHTTPError(resp.StatusCode, respBody)
+		httpErr.requestID = serviceRequestID(resp.Header, respBody)
+		return httpErr
 	}
 
 	if target == nil || len(respBody) == 0 {
@@ -369,7 +373,7 @@ func (c *rleClient) doWithHeaders(
 	}
 
 	if err := json.Unmarshal(respBody, target); err != nil {
-		return fmt.Errorf("decode RLE response: %w", err)
+		return withRequestIDError(fmt.Errorf("decode RLE response: %w", err), serviceRequestID(resp.Header, nil))
 	}
 
 	return nil

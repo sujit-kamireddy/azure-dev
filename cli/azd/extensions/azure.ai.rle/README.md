@@ -55,6 +55,15 @@ az login
 The extension also supports `azd auth login` and other development credentials
 from Azure's default credential chain.
 
+### Service request IDs
+
+When `azd ai rle train` cannot submit a fine-tuning job, or an RLE API call fails,
+the error includes `Request ID: <id>` when the service supplies a request ID in
+its response headers or error correlation details. Share this ID with the team
+along with the command and error message to help investigate the failure.
+Failures without a service response, such as authentication or network failures,
+may not have a service request ID.
+
 Register the appropriate RLE source and install the extension.
 
 For the internal development team:

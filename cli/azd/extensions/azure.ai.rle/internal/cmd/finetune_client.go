@@ -101,10 +101,12 @@ type finetuneJobListResponse struct {
 type finetuneHTTPError struct {
 	statusCode int
 	body       string
+	requestID  string
 }
 
 func (e *finetuneHTTPError) Error() string {
-	return fmt.Sprintf("fine-tuning API returned HTTP %d: %s", e.statusCode, strings.TrimSpace(e.body))
+	return withRequestID(
+		fmt.Sprintf("fine-tuning API returned HTTP %d: %s", e.statusCode, strings.TrimSpace(e.body)), e.requestID)
 }
 
 func finetuneServiceError(err error) error {
@@ -293,11 +295,16 @@ func (c *finetuneClient) doWithReader(
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read fine-tuning API response: %w", err)
+		return withRequestIDError(
+			fmt.Errorf("read fine-tuning API response: %w", err), serviceRequestID(resp.Header, nil))
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &finetuneHTTPError{statusCode: resp.StatusCode, body: string(respBody)}
+		return &finetuneHTTPError{
+			statusCode: resp.StatusCode,
+			body:       string(respBody),
+			requestID:  serviceRequestID(resp.Header, respBody),
+		}
 	}
 
 	if target == nil || len(respBody) == 0 {
@@ -305,7 +312,8 @@ func (c *finetuneClient) doWithReader(
 	}
 
 	if err := json.Unmarshal(respBody, target); err != nil {
-		return fmt.Errorf("decode fine-tuning API response: %w", err)
+		return withRequestIDError(
+			fmt.Errorf("decode fine-tuning API response: %w", err), serviceRequestID(resp.Header, nil))
 	}
 
 	return nil
