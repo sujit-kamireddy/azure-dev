@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,9 +41,36 @@ func (s *rleJobSource) jobPath() string {
 }
 
 func (s *rleJobSource) Config(ctx context.Context) (json.RawMessage, error) {
+	job, err := s.readJob(ctx)
+	return job.Metadata, err
+}
+
+type rleMonitorJob struct {
+	ID       string          `json:"id"`
+	Status   string          `json:"status"`
+	Metadata json.RawMessage `json:"metadata"`
+}
+
+func (s *rleJobSource) readJob(ctx context.Context) (rleMonitorJob, error) {
+	var job rleMonitorJob
+	if !rleJobIDPattern.MatchString(s.jobID) {
+		return job, errors.New("invalid RLE job ID")
+	}
 	var raw json.RawMessage
-	err := s.read(ctx, s.jobPath(), &raw, 1<<20)
-	return raw, err
+	if err := s.read(ctx, s.jobPath(), &raw, 1<<20); err != nil {
+		return job, err
+	}
+	if err := json.Unmarshal(raw, &job); err != nil {
+		return rleMonitorJob{}, fmt.Errorf("decode RLE job response: %w", err)
+	}
+	if job.ID != s.jobID || strings.TrimSpace(job.Status) == "" {
+		return rleMonitorJob{}, errors.New("invalid RLE job status response")
+	}
+	metadata := bytes.TrimSpace(job.Metadata)
+	if len(metadata) == 0 || metadata[0] != '{' {
+		return rleMonitorJob{}, errors.New("RLE job metadata must be an object")
+	}
+	return job, nil
 }
 
 func monitorPageQuery(key string, after int64, token string) string {
@@ -115,17 +143,8 @@ func (s *rleJobSource) Result(ctx context.Context, entry monitor.JobRollout) (ro
 }
 
 func (s *rleJobSource) Status(ctx context.Context) (string, error) {
-	var job struct {
-		JobID  string `json:"job_id"`
-		Status string `json:"status"`
-	}
-	if err := s.read(ctx, s.jobPath(), &job, 1<<20); err != nil {
-		return "", err
-	}
-	if job.JobID != s.jobID || strings.TrimSpace(job.Status) == "" {
-		return "", errors.New("invalid RLE job status response")
-	}
-	return job.Status, nil
+	job, err := s.readJob(ctx)
+	return job.Status, err
 }
 
 func readMonitorJSON(

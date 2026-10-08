@@ -49,7 +49,7 @@ type v1EnvironmentRequest struct {
 	SchemaVersion *string                         `json:"schemaVersion,omitempty"`
 	Defaults      *project.RleEnvironmentDefaults `json:"defaults,omitempty"`
 
-	// EnvironmentProtocol is snake_case where its neighbours are camelCase
+	// EnvironmentProtocol is snake_case where its neighbors are camelCase
 	// because that is the name the service deserializes, and it refuses every
 	// value but mcp_environment, so it has to be omitted rather than sent empty
 	// to publish a legacy environment.

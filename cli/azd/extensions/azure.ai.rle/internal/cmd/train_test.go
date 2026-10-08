@@ -313,7 +313,7 @@ func (c *finetuneSubmissionCredential) GetToken(
 		if c.err != nil || c.empty {
 			return azcore.AccessToken{}, c.err
 		}
-		return azcore.AccessToken{Token: "foundry-user-token", ExpiresOn: time.Now().Add(time.Hour)}, nil
+		return azcore.AccessToken{Token: "foundry-user-token", ExpiresOn: time.Now().Add(time.Hour)}, nil // #nosec G101 -- Fake token used only by the test credential.
 	}
 	return azcore.AccessToken{Token: "test-token", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
