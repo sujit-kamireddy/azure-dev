@@ -1186,6 +1186,24 @@ export function remoteRolloutState(entry) {
   return ["running", "completed", "failed"].includes(entry?.status) ? entry.status : "unknown";
 }
 
+// Fine-tuning retries keep the public job ID but run in a new Loom session.
+// Return no mapping for a single session so ordinary jobs retain the compact list.
+export function rolloutAttemptSessions(entries) {
+  const sessions = new Set();
+  for (const entry of entries ?? []) {
+    const session = isString(entry?.session_id) ? entry.session_id.trim() : "";
+    if (session) sessions.add(session);
+  }
+  if (sessions.size < 2) return new Map();
+
+  const attempts = new Map();
+  for (const entry of entries) {
+    const session = isString(entry?.session_id) ? entry.session_id.trim() : "";
+    if (session && isString(entry?.rollout_id)) attempts.set(entry.rollout_id, session);
+  }
+  return attempts;
+}
+
 // A rollout whose result cannot be read is still shown as a rollout: what the
 // service knows about it, and why there is nothing more to open.
 export function unavailableRolloutMessage(entry) {

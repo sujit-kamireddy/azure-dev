@@ -696,7 +696,9 @@ An unregistered job shows a waiting state; unavailable/expired results leave
 metadata visible. The producer must register the same job ID, publish complete
 metric rows with a nonnegative integer `step` (`step_id` alone is not sufficient),
 and associate rollouts with the job. `sequence_id` is optional; rollouts are listed in
-creation order.
+creation order. Fine-tuning retries retain the same job ID, so when rollout summaries report
+multiple `session_id` values the UI separates them into distinct training attempts. Session-based
+labels remain accurate when the monitor's bounded history no longer includes the initial attempt.
 
 The CLI caches data in memory: the latest 5,000 metric rows (up to 32 MiB) and the
 latest 1,000 rollout summaries. The UI identifies truncated history. Restarting reloads persisted
