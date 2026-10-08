@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  remoteRolloutState, remoteRunNotices, runFacts, runCharts, fetchSnapshot,
+  remoteRolloutState, remoteRunNotices, rolloutAttemptSessions, runFacts, runCharts, fetchSnapshot,
   unavailableRolloutFacts, unavailableRolloutMessage,
 } from "./web/data.mjs";
 
@@ -12,6 +12,21 @@ test("remote execution state comes from metadata, not the task verdict", () => {
   assert.equal(remoteRolloutState({ status: "completed", success: false }), "completed");
   assert.equal(remoteRolloutState({ status: "running", success: true }), "running");
   assert.equal(remoteRolloutState({ success: true }), "unknown");
+});
+
+test("retry attempts are separated by each rollout's training session", () => {
+  const attempts = rolloutAttemptSessions([
+    { rollout_id: "first", session_id: "session-initial" },
+    { rollout_id: "second", session_id: "session-initial" },
+    { rollout_id: "third", session_id: "session-retry-1" },
+    { rollout_id: "fourth", session_id: "session-retry-2" },
+  ]);
+  assert.deepEqual([...attempts], [
+    ["first", "session-initial"], ["second", "session-initial"],
+    ["third", "session-retry-1"], ["fourth", "session-retry-2"],
+  ]);
+  assert.equal(rolloutAttemptSessions([{ rollout_id: "only", session_id: "one-session" }]).size, 0);
+  assert.equal(rolloutAttemptSessions([{ rollout_id: "unknown" }, { rollout_id: "retry", session_id: "known" }]).size, 0);
 });
 
 test("registered config does not require a facade run_meta file", () => {

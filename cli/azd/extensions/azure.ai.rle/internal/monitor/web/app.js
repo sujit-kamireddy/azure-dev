@@ -4,7 +4,7 @@
 import {
   buildGraph, chartGeometry, chartHoverAt, chartPath, chartScales, fetchRolloutIndex, fetchRolloutStates, fetchRunLog, fetchRunMetrics,
   fetchRunOverview, fetchSnapshot, isNumber, mapSnapshot, present, rewardGeometry,
-  runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage,
+  rolloutAttemptSessions, runCharts, runFacts, runHeadline, runWarnings, sequenceData, sequenceLabel, sequencePage,
   STATE_REQUEST_LIMIT, TOKEN_PAGE_SIZE, WATCH_LIMIT,
   toolCalls, toolCallSummary, withGroupSignal, remoteRolloutState, remoteRunNotices,
   unavailableRolloutFacts, unavailableRolloutMessage,
@@ -948,14 +948,29 @@ function applyMonitorTitle(jobID) {
 
 function renderRolloutList() {
   const entries = visibleEntries();
+  const attemptSessions = rolloutAttemptSessions(rolloutIndex.data);
+  const attemptCount = new Set(attemptSessions.values()).size;
   applyMonitorTitle(rolloutIndex.job_id || "");
   byID("list-job-id").textContent = rolloutIndex.job_id || "";
-  byID("list-count").textContent = entries.length === rolloutIndex.data.length
+  const recorded = entries.length === rolloutIndex.data.length
     ? `· ${count(entries.length)} recorded`
     : `· ${count(entries.length)} of ${count(rolloutIndex.data.length)} recorded`;
+  byID("list-count").textContent = attemptCount > 1 ? `${recorded} · ${attemptCount} attempts shown` : recorded;
   const body = byID("list-body");
   body.replaceChildren();
+  let previousAttempt = null;
   entries.forEach((entry, index) => {
+    const attempt = attemptSessions.get(entry.rollout_id);
+    if (attempt && attempt !== previousAttempt) {
+      const divider = element("tr", undefined, "attempt-divider");
+      const heading = element("th", `Training attempt · ${short(attempt, 28)}`);
+      heading.colSpan = 9;
+      heading.scope = "rowgroup";
+      heading.title = attempt;
+      divider.append(heading);
+      body.append(divider);
+      previousAttempt = attempt;
+    }
     const row = element("tr");
     // The real RLE service does not report a sampler sequence per rollout, so
     // fall back to this row's position in the (oldest-first) list: a blank
