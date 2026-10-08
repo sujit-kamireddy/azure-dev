@@ -102,10 +102,9 @@ func (a *publishAction) Run() error {
 
 	if _, err := fmt.Fprintf(
 		a.cmd.OutOrStdout(),
-		"\nPublished environment '%s' version %s (%s).\n",
+		"\nPublished environment '%s' version %s\n",
 		environment.Name,
 		environment.Version,
-		environment.Id,
 	); err != nil {
 		return err
 	}

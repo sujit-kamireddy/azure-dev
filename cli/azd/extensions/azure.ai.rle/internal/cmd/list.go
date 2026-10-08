@@ -70,13 +70,14 @@ func (a *listAction) Run() error {
 		rows = append(rows, []string{
 			environment.Name,
 			environment.Version,
-			environment.DiskImageConversionStatus,
-			environment.Id,
+			firstNonEmpty(environment.Type, "-"),
+			firstNonEmpty(environment.Subtype, "-"),
+			firstNonEmpty(environment.DiskImageConversionStatus, "-"),
 			environment.UpdatedAt,
 		})
 	}
 	renderTableOrNoResults(output,
-		[]string{"NAME", "VERSION", "DISK IMAGE", "ENVIRONMENT ID", "UPDATED"},
+		[]string{"NAME", "VERSION", "TYPE", "SUBTYPE", "DISK IMAGE", "UPDATED"},
 		rows,
 		noEnvironmentsMessage,
 	)

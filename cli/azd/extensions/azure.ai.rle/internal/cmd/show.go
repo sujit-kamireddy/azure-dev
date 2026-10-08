@@ -72,13 +72,14 @@ func (a *showAction) Run() error {
 	for _, version := range versions {
 		rows = append(rows, []string{
 			version.Version,
-			version.DiskImageConversionStatus,
-			version.Id,
+			firstNonEmpty(version.Type, "-"),
+			firstNonEmpty(version.Subtype, "-"),
+			firstNonEmpty(version.DiskImageConversionStatus, "-"),
 			version.UpdatedAt,
 		})
 	}
 	renderTableOrNoResults(output,
-		[]string{"VERSION", "DISK IMAGE", "ENVIRONMENT ID", "UPDATED"},
+		[]string{"VERSION", "TYPE", "SUBTYPE", "DISK IMAGE", "UPDATED"},
 		rows,
 		noEnvironmentVersionsMessage,
 	)

@@ -11,12 +11,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
 	"azure.ai.rle/internal/project"
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEnvironmentListListsProjectEnvironments(t *testing.T) {
@@ -49,6 +51,8 @@ func TestEnvironmentListListsProjectEnvironments(t *testing.T) {
 					"id": "env-1",
 					"name": "echo_env",
 					"version": "1.2.0",
+					"type": "Gym",
+					"subtype": "OpenEnv",
 					"diskImageConversionStatus": "Ready",
 					"updatedAtUtc": "2026-07-30T05:00:00Z"
 				},
@@ -56,6 +60,8 @@ func TestEnvironmentListListsProjectEnvironments(t *testing.T) {
 					"id": "env-2",
 					"name": "code_rl",
 					"version": "2.0.0",
+					"type": "Harness",
+					"subtype": "BYOH",
 					"diskImageConversionStatus": "Pending",
 					"updatedAtUtc": "2026-07-30T06:00:00Z"
 				}
@@ -81,17 +87,31 @@ func TestEnvironmentListListsProjectEnvironments(t *testing.T) {
 	for _, expected := range []string{
 		"NAME",
 		"VERSION",
+		"TYPE",
+		"SUBTYPE",
 		"DISK IMAGE",
-		"ENVIRONMENT ID",
 		"echo_env",
 		"1.2.0",
-		"env-1",
+		"Gym",
+		"OpenEnv",
+		"Harness",
+		"BYOH",
 		"code_rl",
 		"Pending",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("expected output to contain %q, got %s", expected, output.String())
 		}
+	}
+	for _, unexpected := range []string{"ENVIRONMENT ID", "env-1", "env-2"} {
+		if strings.Contains(output.String(), unexpected) {
+			t.Fatalf("expected table to omit %q, got %s", unexpected, output.String())
+		}
+	}
+	if got := strings.Fields(strings.Split(strings.TrimSpace(output.String()), "\n")[0]); !slices.Equal(
+		got, []string{"NAME", "VERSION", "TYPE", "SUBTYPE", "DISK", "IMAGE", "UPDATED"},
+	) {
+		t.Fatalf("unexpected list columns: %v", got)
 	}
 	if !strings.HasPrefix(output.String(), "\n") || !strings.HasSuffix(output.String(), "\n\n") {
 		t.Fatalf("expected blank lines around table, got %q", output.String())
@@ -131,6 +151,94 @@ func TestEnvironmentListSupportsJSONOutput(t *testing.T) {
 	}
 	if len(result) != 1 || result[0].Id != "env-1" || result[0].Name != "echo_env" {
 		t.Fatalf("unexpected environments JSON: %#v", result)
+	}
+}
+
+func TestEnvironmentTablesDisplayMissingValues(t *testing.T) {
+	for _, commandName := range []string{"list", "show"} {
+		for _, tt := range []struct {
+			name     string
+			typeName string
+			subtype  string
+			status   string
+			want     []string
+		}{
+			{name: "absent", want: []string{"-", "-", "-"}},
+			{name: "whitespace", typeName: " ", subtype: "\t", status: " \t", want: []string{"-", "-", "-"}},
+			{
+				name: "ready", typeName: "Gym", subtype: "OpenEnv", status: "Ready",
+				want: []string{"Gym", "OpenEnv", "Ready"},
+			},
+			{
+				name: "pending", typeName: "Harness", subtype: "BYOH", status: "Pending",
+				want: []string{"Harness", "BYOH", "Pending"},
+			},
+			{
+				name: "failed", typeName: "Harness", subtype: "HostedAgent", status: "Failed",
+				want: []string{"Harness", "HostedAgent", "Failed"},
+			},
+			{name: "missing status", typeName: "Gym", subtype: "OpenEnv", want: []string{"Gym", "OpenEnv", "-"}},
+		} {
+			t.Run(commandName+"/"+tt.name, func(t *testing.T) {
+				resource := environmentResource{
+					Id: "opaque-id", Name: "math_rl", Version: "1.0.0",
+					Type: tt.typeName, Subtype: tt.subtype, DiskImageConversionStatus: tt.status,
+					UpdatedAt: "2026-07-30T05:00:00Z",
+					ProjectId: "project-id", AcrImagePath: "example.azurecr.io/math-rl:1.0.0",
+					AgentName: "agent", AgentVersion: "2", BaseURL: "https://harness.example.com",
+					SchemaVersion: new(project.CurrentRleManifestSchemaVersion),
+					Defaults: &project.RleEnvironmentDefaults{
+						Model: &project.RleModelDefaults{Name: new("test-model")},
+					},
+					CreatedAt: "2026-07-30T04:00:00Z", VersionLabel: "test-label",
+					DiskImageConversionError: "test-error",
+				}
+				controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodGet {
+						t.Fatalf("unexpected request method: %s", r.Method)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					response := pagedEnvironmentResponse{Data: []environmentResource{resource}}
+					if err := json.NewEncoder(w).Encode(response); err != nil {
+						t.Error(err)
+					}
+				}))
+				defer controlPlane.Close()
+				stubRleClientEndpoint(t, controlPlane.URL)
+
+				outputFormat := "default"
+				command := newListCommand(&outputFormat)
+				if commandName == "show" {
+					command = newShowCommand(&outputFormat)
+					command.SetArgs([]string{"math_rl"})
+				}
+				var output bytes.Buffer
+				command.SetOut(&output)
+				command.SetErr(&output)
+				if err := command.Execute(); err != nil {
+					t.Fatal(err)
+				}
+				lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+				row := strings.Fields(lines[len(lines)-1])
+				want := append([]string{"1.0.0"}, tt.want...)
+				want = append(want, resource.UpdatedAt)
+				if commandName == "list" {
+					want = append([]string{resource.Name}, want...)
+				}
+				if !slices.Equal(row, want) {
+					t.Fatalf("table row = %v, want %v", row, want)
+				}
+				if strings.Contains(output.String(), resource.Id) {
+					t.Fatalf("table must not show the opaque ID: %s", output.String())
+				}
+				output.Reset()
+				outputFormat = "json"
+				require.NoError(t, command.Execute())
+				wantJSON, err := json.Marshal([]environmentResource{resource})
+				require.NoError(t, err)
+				require.JSONEq(t, string(wantJSON), output.String())
+			})
+		}
 	}
 }
 
@@ -372,6 +480,8 @@ func TestShowDisplaysEnvironmentHistory(t *testing.T) {
 						"id":"env-version-1",
 						"name":"echo_env",
 						"version":"1.0.0",
+						"type":"Gym",
+						"subtype":"OpenEnv",
 						"diskImageConversionStatus":"Failed",
 						"updatedAtUtc":"2026-07-28T06:00:00Z",
 						"createdAtUtc":"2026-07-28T05:00:00Z",
@@ -381,6 +491,8 @@ func TestShowDisplaysEnvironmentHistory(t *testing.T) {
 						"id":"env-1",
 						"name":"echo_env",
 						"version":"1.2.0",
+						"type":"Harness",
+						"subtype":"HostedAgent",
 						"diskImageConversionStatus":"Ready",
 						"updatedAtUtc":"2026-07-30T05:00:00Z",
 						"createdAtUtc":"2026-07-30T05:00:00Z",
@@ -408,9 +520,14 @@ func TestShowDisplaysEnvironmentHistory(t *testing.T) {
 
 	for _, expected := range []string{
 		"VERSION",
+		"TYPE",
+		"SUBTYPE",
 		"DISK IMAGE",
-		"ENVIRONMENT ID",
 		"UPDATED",
+		"Gym",
+		"OpenEnv",
+		"Harness",
+		"HostedAgent",
 		"1.2.0",
 		"Ready",
 		"1.0.0",
@@ -422,6 +539,9 @@ func TestShowDisplaysEnvironmentHistory(t *testing.T) {
 	}
 	for _, unexpected := range []string{
 		"NAME",
+		"ENVIRONMENT ID",
+		"env-version-1",
+		"env-1",
 		"ACR IMAGE",
 		"echo_env",
 		"registry/echo:1.2.0",
@@ -434,6 +554,11 @@ func TestShowDisplaysEnvironmentHistory(t *testing.T) {
 		if strings.Contains(output.String(), unexpected) {
 			t.Fatalf("expected one consolidated table without %q, got %s", unexpected, output.String())
 		}
+	}
+	if got := strings.Fields(strings.Split(strings.TrimSpace(output.String()), "\n")[0]); !slices.Equal(
+		got, []string{"VERSION", "TYPE", "SUBTYPE", "DISK", "IMAGE", "UPDATED"},
+	) {
+		t.Fatalf("unexpected show columns: %v", got)
 	}
 }
 
@@ -476,6 +601,7 @@ func TestShowSupportsJSONOutput(t *testing.T) {
 		t.Fatalf("expected version-list JSON, got %s: %v", output.String(), err)
 	}
 	if len(versions) != 1 ||
+		versions[0].Id != "env-1" ||
 		versions[0].Name != "echo_env" ||
 		versions[0].AcrImagePath != "registry/echo:1.2.0" ||
 		versions[0].CreatedAt != "2026-07-30T04:00:00Z" {

@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,6 +18,114 @@ import (
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 )
+
+func TestMain(m *testing.M) {
+	// The publish regression test uses this binary instead of a real container runtime.
+	if os.Getenv("RLE_TEST_PUBLISH_CONTAINER_RUNTIME") == "1" {
+		if len(os.Args) > 1 && (os.Args[1] == "build" || os.Args[1] == "push") {
+			os.Exit(0)
+		}
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
+func TestPublishDisplaysReleaseIdentityAndPreservesJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("AZURE_CONTAINER_REGISTRY_ENDPOINT", "example.azurecr.io")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AZD_CONTAINER_RUNTIME", executable)
+	t.Setenv("RLE_TEST_PUBLISH_CONTAINER_RUNTIME", "1")
+	config := project.RleConfig{
+		SchemaVersion: new(project.CurrentRleManifestSchemaVersion),
+		Rle: project.RleManifest{
+			Name: "math_rl", Version: "1.0.0",
+			Type: project.RleTypeGym, Subtype: project.RleSubtypeOpenEnv,
+		},
+		Defaults: &project.RleEnvironmentDefaults{
+			Model: &project.RleModelDefaults{Name: new("test-model")},
+		},
+	}
+	if err := project.WriteRleConfig(dir, config); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	published := environmentResource{
+		Id: "opaque-environment-id", Name: config.Rle.Name, Version: config.Rle.Version,
+		Type: "Gym", Subtype: "OpenEnv",
+		AcrImagePath: "example.azurecr.io/project-1-math-rl:1.0.0",
+		Defaults:     config.Defaults, CreatedAt: "2026-07-30T04:00:00Z", UpdatedAt: "2026-07-30T05:00:00Z",
+		SchemaVersion: config.SchemaVersion,
+	}
+	requestCount := 0
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == testFoundryProjectPath+environmentCollectionPath+"/math_rl":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == testFoundryProjectPath+environmentCollectionPath:
+			var request v1EnvironmentRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+				return
+			}
+			if request.Name != published.Name || request.Version != published.Version ||
+				request.Type != published.Type || request.Subtype != published.Subtype ||
+				request.AcrImagePath != published.AcrImagePath {
+				t.Errorf("unexpected publish request: %#v", request)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(published); err != nil {
+				t.Error(err)
+			}
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer controlPlane.Close()
+	stubRleClientEndpoint(t, controlPlane.URL)
+
+	command := newPublishCommand()
+	var stdout, stderr bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+	if err := command.Execute(); err != nil {
+		t.Fatalf("publish failed: %v; stderr: %s", err, stderr.String())
+	}
+	if requestCount != 2 {
+		t.Fatalf("expected preflight and publish requests, got %d", requestCount)
+	}
+	const success = "\nPublished environment 'math_rl' version 1.0.0\n"
+	_, details, found := strings.Cut(stdout.String(), success)
+	if !found {
+		t.Fatalf("expected exact success line %q, got %s", success, stdout.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(details), &payload); err != nil {
+		t.Fatalf("expected JSON after success line, got %s: %v", details, err)
+	}
+	for field, want := range map[string]string{
+		"environmentId": published.Id, "environmentName": published.Name, "environmentVersion": published.Version,
+		"type": published.Type, "subtype": published.Subtype, "acrImage": published.AcrImagePath,
+		"foundryProjectEndpoint": "https://account.services.ai.azure.com/api/projects/project-1",
+		"createdAt":              published.CreatedAt, "updatedAt": published.UpdatedAt,
+		"schemaVersion": *published.SchemaVersion,
+	} {
+		if payload[field] != want {
+			t.Errorf("%s = %v, want %q", field, payload[field], want)
+		}
+	}
+	if defaults, ok := payload["defaults"].(map[string]any); !ok || defaults["model"] == nil {
+		t.Fatalf("expected defaults to remain in JSON, got %#v", payload["defaults"])
+	}
+	t.Logf("Captured publish output:\n%s", stdout.String())
+}
 
 func TestBuildEnvironmentCreateRequestMapsManifestConfiguration(t *testing.T) {
 	agentName := "support-agent"
