@@ -172,14 +172,14 @@ func TestInitHostedAgentSampleSourceCopiesWorkingSample(t *testing.T) {
 		`subtype = 'HostedAgent'`,
 		`agentName = 'code-repair-agent'`,
 		`agentVersion = '1'`,
-		// init rewrites identity but must carry the sample's protocol through
-		// untouched: dropping it here would scaffold a project that publishes
-		// as legacy and never takes the MCP rollout path.
-		`environmentProtocol = 'mcp_environment'`,
 	} {
 		if !strings.Contains(string(config), expected) {
 			t.Fatalf("expected config to contain %q, got:\n%s", expected, config)
 		}
+	}
+	// A sample that still declares the deprecated protocol must not carry it into the scaffold.
+	if strings.Contains(strings.ToLower(string(config)), "protocol") {
+		t.Fatalf("expected the deprecated environment protocol to be dropped, got:\n%s", config)
 	}
 	if !strings.Contains(output.String(), "Copied a working HostedAgent sample (agent + rle)") {
 		t.Fatalf("expected sample-copy confirmation, got %s", output.String())

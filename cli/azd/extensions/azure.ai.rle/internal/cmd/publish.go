@@ -119,7 +119,6 @@ func (a *publishAction) Run() error {
 		AgentName:              environment.AgentName,
 		AgentVersion:           environment.AgentVersion,
 		BaseURL:                environment.BaseURL,
-		EnvironmentProtocol:    environment.EnvironmentProtocol,
 		SchemaVersion:          environment.SchemaVersion,
 		Defaults:               environment.Defaults,
 		CreatedAt:              environment.CreatedAt,
@@ -183,17 +182,16 @@ func buildEnvironmentCreateRequest(
 	image string,
 ) v1EnvironmentRequest {
 	return v1EnvironmentRequest{
-		Name:                config.Rle.Name,
-		AcrImagePath:        image,
-		Version:             config.Rle.Version,
-		Type:                string(config.Rle.Type),
-		Subtype:             string(config.Rle.Subtype),
-		AgentName:           config.Rle.AgentName,
-		AgentVersion:        config.Rle.AgentVersion,
-		BaseURL:             config.Rle.BaseURL,
-		EnvironmentProtocol: config.Rle.EnvironmentProtocol,
-		SchemaVersion:       config.SchemaVersion,
-		Defaults:            config.Defaults,
+		Name:          config.Rle.Name,
+		AcrImagePath:  image,
+		Version:       config.Rle.Version,
+		Type:          string(config.Rle.Type),
+		Subtype:       string(config.Rle.Subtype),
+		AgentName:     config.Rle.AgentName,
+		AgentVersion:  config.Rle.AgentVersion,
+		BaseURL:       config.Rle.BaseURL,
+		SchemaVersion: config.SchemaVersion,
+		Defaults:      config.Defaults,
 	}
 }
 
@@ -247,16 +245,6 @@ func verifyPublishedEnvironment(config project.RleConfig, environment *environme
 			"Check the RLE service response and retry.",
 		)
 	}
-	if !reflect.DeepEqual(manifest.EnvironmentProtocol, environment.EnvironmentProtocol) {
-		return publishedEnvironmentMismatchError(
-			fmt.Sprintf(
-				"RLE service returned environment protocol %s, but rle.toml declares %s.",
-				describeRleEnvironmentProtocol(environment.EnvironmentProtocol),
-				describeRleEnvironmentProtocol(manifest.EnvironmentProtocol),
-			),
-			"A version's protocol is immutable. Publish a new version with the protocol you want.",
-		)
-	}
 	if !reflect.DeepEqual(config.SchemaVersion, environment.SchemaVersion) {
 		return publishedEnvironmentMismatchError(
 			"RLE service returned a different defaults schema version than rle.toml.",
@@ -270,16 +258,6 @@ func verifyPublishedEnvironment(config project.RleConfig, environment *environme
 		)
 	}
 	return nil
-}
-
-// describeRleEnvironmentProtocol names an absent protocol, so that the common
-// mismatch -- asking for mcp_environment and being published as legacy -- does
-// not read as a comparison against an empty string.
-func describeRleEnvironmentProtocol(protocol *project.RleEnvironmentProtocol) string {
-	if protocol == nil {
-		return "legacy (unset)"
-	}
-	return string(*protocol)
 }
 
 func publishedEnvironmentMismatchError(message string, suggestion string) error {
@@ -325,7 +303,6 @@ type environmentOutput struct {
 	AgentName              string                          `json:"agentName,omitempty"`
 	AgentVersion           string                          `json:"agentVersion,omitempty"`
 	BaseURL                string                          `json:"baseUrl,omitempty"`
-	EnvironmentProtocol    *project.RleEnvironmentProtocol `json:"environmentProtocol,omitempty"`
 	SchemaVersion          *string                         `json:"schemaVersion,omitempty"`
 	Defaults               *project.RleEnvironmentDefaults `json:"defaults,omitempty"`
 	CreatedAt              string                          `json:"createdAt"`
