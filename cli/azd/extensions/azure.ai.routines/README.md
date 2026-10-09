@@ -19,7 +19,11 @@ reporter.Report(ctx, telemetry.Event{
 
 The example is illustrative; this extension does not currently emit a product
 usage event. Add an event only after its product question, bounded values,
-documentation, and privacy review are agreed.
+documentation, and privacy review are agreed. Before emitting, declare each
+`ext.*` attribute in `cli/azd/extensions/telemetry/fields.go` — reuse an existing
+declaration only when its meaning, allowed values, classification, and purpose are
+identical, otherwise declare a distinct key — as enforced by
+`go test ./extensions/telemetry`.
 
 `Report` has no return value and never changes command or service-target
 behavior. It uses a one-second timeout, does not retry, and does not log
@@ -62,6 +66,38 @@ services:
 ```
 
 References are resolved during `azd deploy`. Remote URLs are not supported.
+
+## Author a routine manifest
+
+Extension-owned routine properties use camelCase in `azure.yaml` and in YAML or
+JSON files loaded through `$ref` or `--file`. During deployment, the extension
+translates them to the Foundry API's snake_case fields.
+
+```yaml
+description: Summarize repository activity every weekday.
+enabled: true
+triggers:
+  default:
+    type: schedule
+    cronExpression: "0 9 * * 1-5"
+    timeZone: America/Los_Angeles
+action:
+  type: invoke_agent_responses_api
+  agentName: summarizer
+  conversation: existing-conversation
+  input:
+    topic: ${SUMMARY_TOPIC}
+```
+
+GitHub issue triggers use `connectionId` and `issueEvent`; custom triggers use
+`eventName`. Actions can use `agentEndpointId` instead of `agentName`, and
+invocations-API actions can continue a session with `sessionId`.
+
+The contents of `triggers.<name>.parameters` and `action.input` are
+service/provider-owned payloads. Their property names are passed through
+unchanged, including snake_case properties required by those external
+contracts. Trigger and action `type` values such as `github_issue` and
+`invoke_agent_responses_api` also remain unchanged.
 
 ## Timeout configuration
 

@@ -24,10 +24,12 @@ import (
 	"azureaiagent/internal/cmd/nextstep"
 	"azureaiagent/internal/exterrors"
 	"azureaiagent/internal/pkg/agents/agent_api"
+	"azureaiagent/internal/telemetry"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
+	foundryTelemetry "github.com/azure/azure-dev/cli/azd/pkg/foundry/telemetry"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -86,6 +88,7 @@ type InvokeAction struct {
 	resolvedBodyLabel     string
 	bodyResolved          bool
 	credential            azcore.TokenCredential
+	invokeReporter        foundryTelemetry.Reporter
 }
 
 func newInvokeCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
@@ -287,11 +290,19 @@ This option does not provide crash recovery or automatic reconnection.`,
 				return err
 			}
 
-			if flags.newSession && flags.conversation != "" {
+			if cmd.Flags().Changed("conversation-id") && strings.TrimSpace(flags.conversation) == "" {
+				return exterrors.Validation(
+					exterrors.CodeInvalidParameter,
+					"--conversation-id cannot be empty",
+					"provide a valid conversation ID or omit --conversation-id",
+				)
+			}
+
+			if flags.forceNewConversation() && flags.conversation != "" {
 				return exterrors.Validation(
 					exterrors.CodeConflictingArguments,
-					"cannot use --new-session with --conversation-id; a new session requires a new conversation",
-					"remove --conversation-id to start a new session, or remove --new-session to reuse the conversation",
+					"cannot use conversation reset flags with --conversation-id",
+					"remove --conversation-id to start a new conversation, or remove the reset flag to reuse it",
 				)
 			}
 
@@ -562,6 +573,9 @@ func (a *InvokeAction) Run(ctx context.Context) error {
 			if errors.Is(pErr, errVoiceInvocationUnsupported) {
 				return pErr
 			}
+			if localErr, ok := errors.AsType[*azdext.LocalError](pErr); ok {
+				return localErr
+			}
 			if _, ok := errors.AsType[agentServiceLookupNotFoundError](pErr); !ok || a.flags.name == "" {
 				return fmt.Errorf("failed to resolve prompt agent service: %w", pErr)
 			}
@@ -580,7 +594,7 @@ func (a *InvokeAction) Run(ctx context.Context) error {
 	}
 
 	// Re-validate after protocol resolution: when --protocol was omitted the
-	// protocol may have been auto-detected as a2a (e.g. from agent.yaml). In
+	// protocol may have been auto-detected as a2a from the service definition. In
 	// that case the flag-parse guard above was skipped and clientHeaders was
 	// populated, but a2aRemote never calls applyCustomHeaders — the headers
 	// would be silently dropped, which is the exact silent no-op the guard
@@ -620,7 +634,7 @@ func (a *InvokeAction) Run(ctx context.Context) error {
 		}
 	}
 
-	// Remote: route by protocol.
+	// Remote: route by protocol. Each handler reports usage after resolving its target.
 	switch protocol {
 	case agent_api.AgentProtocolInvocations:
 		return a.invocationsRemote(ctx)
@@ -629,6 +643,39 @@ func (a *InvokeAction) Run(ctx context.Context) error {
 	default:
 		return a.responsesRemote(ctx)
 	}
+}
+
+func (a *InvokeAction) reportInvokeUsageForRemote(
+	ctx context.Context, protocol agent_api.AgentProtocol, rc *remoteContext,
+) {
+	// Explicit endpoints have no project-backed kind to inspect. For project-backed
+	// routes, count only hosted agents; prompt, voice and workflow are excluded.
+	if a.endpoint == nil && !rc.hosted {
+		return
+	}
+	a.reportInvokeUsage(ctx, protocol, rc)
+}
+
+func (a *InvokeAction) reportInvokeUsage(
+	ctx context.Context, protocol agent_api.AgentProtocol, rc *remoteContext,
+) {
+	event := telemetry.AgentInvokeSelected(string(protocol), a.flags.longRunning, a.flags.noWait)
+	if a.invokeReporter != nil {
+		a.invokeReporter.Report(ctx, event)
+		return
+	}
+	if rc.azdClient != nil {
+		foundryTelemetry.NewReporter(rc.azdClient.Telemetry(), nil).Report(ctx, event)
+		return
+	}
+
+	azdClient, err := azdext.NewAzdClient()
+	if err != nil {
+		azdext.NewLogger("agent.telemetry").Debug("telemetry client unavailable", "event", event.Name)
+		return
+	}
+	defer azdClient.Close()
+	foundryTelemetry.NewReporter(azdClient.Telemetry(), nil).Report(ctx, event)
 }
 
 func (a *InvokeAction) closeResolvedRemoteContextClient() {
@@ -1214,6 +1261,7 @@ type remoteContext struct {
 	apiVersion                         string
 	version                            string
 	deployedVersion                    string
+	hosted                             bool
 	invocableProtocols                 []agent_api.AgentProtocol
 	deployedProtocolMetadata           bool
 	deployedProtocolMetadataIncomplete bool
@@ -1319,6 +1367,7 @@ func (a *InvokeAction) resolveRemoteContext(ctx context.Context) (*remoteContext
 	resolutionOptions := []agentServiceResolutionOption{
 		withBrownfieldInlineAgentName(),
 		withVoiceInvocationGuidance(),
+		withHostedKind(),
 	}
 	if a.flags.protocol == "" {
 		resolutionOptions = append(
@@ -1355,6 +1404,7 @@ func (a *InvokeAction) resolveRemoteContext(ctx context.Context) (*remoteContext
 		}
 	} else {
 		rc.serviceName = info.ServiceName
+		rc.hosted = info.IsHosted
 		rc.name = remoteAgentNameFromService(rc.name, info, a.protocolServiceName != "")
 		rc.invocableProtocols = invocableProtocolsFromEndpoints(info.ProtocolEndpoints)
 		rc.deployedProtocolMetadata = info.ProtocolEndpointsPresent
@@ -1534,6 +1584,7 @@ func (a *InvokeAction) responsesRemote(ctx context.Context) error {
 	if rc.azdClient != nil {
 		defer rc.azdClient.Close()
 	}
+	a.reportInvokeUsageForRemote(ctx, agent_api.AgentProtocolResponses, rc)
 
 	agentKey := rc.agentKey
 	if agentKey == "" && rc.azdClient != nil {
@@ -1858,6 +1909,7 @@ func (a *InvokeAction) invocationsRemote(ctx context.Context) error {
 	if rc.azdClient != nil {
 		defer rc.azdClient.Close()
 	}
+	a.reportInvokeUsageForRemote(ctx, agent_api.AgentProtocolInvocations, rc)
 
 	agentKey := rc.agentKey
 	if agentKey == "" && rc.azdClient != nil {
