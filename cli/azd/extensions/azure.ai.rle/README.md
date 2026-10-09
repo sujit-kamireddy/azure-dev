@@ -196,53 +196,15 @@ without credentials, a query string, or a fragment.
 
 ### Environment protocol
 
-An environment declares how RLE should drive it during a rollout. MCP is supported
-for Gym/OpenEnv and Harness/HostedAgent or Harness/BYOH environments:
-
-```toml
-[rle]
-name = "support_rle"
-version = "2.0.0"
-type = "Harness"
-subtype = "HostedAgent"
-agentName = "support-agent"
-agentVersion = "12"
-environmentProtocol = "mcp_environment"
-```
-
-SDK Gym samples may declare the same protocol at the manifest root:
-
-```toml
-schema_version = "1.0.0"
-environment_protocol = "mcp_environment"
-
-[rle]
-name = "math_rl"
-version = "1.0.0"
-type = "Gym"
-subtype = "OpenEnv"
-```
-
-The CLI accepts either spelling and preserves the protocol when rewriting a
-manifest. If both are supplied, they must agree. MCP Gym samples submit their
+RLE always drives environments with the MCP environment protocol, so `rle.toml` does not
+declare one and the CLI no longer sends one to the service. MCP Gym samples submit their
 final response using `GradeAction.answer`, rather than a schema-driven
 `defaults.gym_openenv.model_response_field`.
 
-`mcp_environment` is the only value. Omit the field to publish an environment on the
-legacy protocol; that is what an absent value means to the service, which is why
-there is no name for it.
-
-The protocol is fixed when the version is published and cannot be changed
-afterwards, because a run is only reproducible if the environment it trained
-against still behaves the same way. Switching protocols means publishing a new
-version. `publish` prints the protocol the service recorded and fails if it does
-not match the manifest, so a silently legacy environment is caught at publish
-rather than in a training run.
-
-Only `Harness`/`HostedAgent` and `Harness`/`BYOH` may declare a protocol. A
-`Gym`/`OpenEnv` environment already speaks one callable interface, so naming a
-protocol there is rejected.
-
+Existing manifests that still contain `environment_protocol = "mcp_environment"` (root) or
+`environmentProtocol = "mcp_environment"` (under `[rle]`) keep loading; the key is ignored and
+dropped when the CLI rewrites a manifest. Any other value is rejected. Remove the key from
+your manifests.
 ### Version-scoped defaults
 
 `schema_version` is a root-level manifest field, separate from the immutable

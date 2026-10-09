@@ -2,6 +2,10 @@
 
 ## 0.8.24-preview
 
+- `rle.toml` no longer needs `environment_protocol` / `environmentProtocol`. RLE always uses the
+  MCP environment protocol, so the CLI no longer sends or verifies it. Manifests that still set
+  `mcp_environment` keep working; the key is ignored.
+
 - Training submissions now automatically forward a Foundry user token in
   `aml-user-token` for evaluation authentication, separate from the
   Cognitive Services request token. Token acquisition failures stop submission.

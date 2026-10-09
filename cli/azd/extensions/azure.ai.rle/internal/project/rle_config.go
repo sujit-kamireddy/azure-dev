@@ -45,21 +45,16 @@ const (
 	RleSubtypeBYOH        RleSubtype = "BYOH"
 )
 
-// RleEnvironmentProtocol selects how RLE drives an environment during a rollout.
-//
-// There is deliberately no constant for the legacy protocol. The service models
-// this as an optional field whose absence means legacy, and rejects every value
-// but the one below, so a legacy environment is published by omitting the field
-// rather than by naming it.
-type RleEnvironmentProtocol string
-
-// RleEnvironmentProtocolMcpEnvironment is the MCP reset, step, and close protocol.
-const RleEnvironmentProtocolMcpEnvironment RleEnvironmentProtocol = "mcp_environment"
+// deprecatedMcpEnvironmentProtocol is the only value still accepted for the deprecated
+// environment_protocol / rle.environmentProtocol keys. RLE always uses the MCP environment
+// protocol, so the keys are validated for compatibility and then discarded.
+const deprecatedMcpEnvironmentProtocol = "mcp_environment"
 
 // RleConfig is the host-agnostic source configuration for one immutable RLE release.
 type RleConfig struct {
-	SchemaVersion       *string                 `toml:"schema_version,omitempty"`
-	EnvironmentProtocol *RleEnvironmentProtocol `toml:"environment_protocol,omitempty"`
+	SchemaVersion *string `toml:"schema_version,omitempty"`
+	// EnvironmentProtocol is deprecated and ignored; it is cleared during normalization.
+	EnvironmentProtocol *string                 `toml:"environment_protocol,omitempty"`
 	Rle                 RleManifest             `toml:"rle"`
 	Defaults            *RleEnvironmentDefaults `toml:"defaults,omitempty"`
 	Train               *RleTrainSettings       `toml:"train,omitempty"`
@@ -84,12 +79,8 @@ type RleManifest struct {
 	AgentVersion *string `toml:"agentVersion,omitempty"`
 	BaseURL      *string `toml:"baseUrl,omitempty"`
 
-	// EnvironmentProtocol is immutable for a published version, because RLE
-	// resolves the rollout path from it and a version that changed protocol
-	// mid-life would not be the environment a finished run was trained against.
-	// Omit it to publish a legacy environment; that is what the service reads an
-	// absent value as.
-	EnvironmentProtocol *RleEnvironmentProtocol `toml:"environmentProtocol,omitempty"`
+	// EnvironmentProtocol is deprecated and ignored; it is cleared during normalization.
+	EnvironmentProtocol *string `toml:"environmentProtocol,omitempty"`
 }
 
 // RleEnvironmentDefaults contains reusable version-scoped training defaults.
@@ -237,26 +228,13 @@ func NormalizeRleConfig(config RleConfig) (RleConfig, error) {
 	if err != nil {
 		return RleConfig{}, err
 	}
-	manifest.EnvironmentProtocol, err = normalizeRleEnvironmentProtocol(
-		manifest.EnvironmentProtocol,
-	)
-	if err != nil {
+	if err := validateDeprecatedEnvironmentProtocol(manifest.EnvironmentProtocol); err != nil {
 		return RleConfig{}, err
 	}
-	protocol, err := normalizeRleEnvironmentProtocol(config.EnvironmentProtocol)
-	if err != nil {
+	if err := validateDeprecatedEnvironmentProtocol(config.EnvironmentProtocol); err != nil {
 		return RleConfig{}, err
 	}
-	if protocol != nil {
-		if manifest.EnvironmentProtocol != nil && *manifest.EnvironmentProtocol != *protocol {
-			return RleConfig{}, localError(
-				"environment_protocol conflicts with rle.environmentProtocol.",
-				"rle_manifest_environment_protocol_invalid",
-				"Declare the environment protocol in only one location.",
-			)
-		}
-		manifest.EnvironmentProtocol = protocol
-	}
+	manifest.EnvironmentProtocol = nil
 	config.EnvironmentProtocol = nil
 
 	switch manifest.Type {
@@ -717,30 +695,21 @@ func normalizeRleSubtype(value RleSubtype) (RleSubtype, error) {
 	}
 }
 
-// normalizeRleEnvironmentProtocol preserves an absent legacy protocol and validates MCP.
-func normalizeRleEnvironmentProtocol(
-	value *RleEnvironmentProtocol,
-) (*RleEnvironmentProtocol, error) {
+// validateDeprecatedEnvironmentProtocol accepts only the MCP value that older manifests declared.
+func validateDeprecatedEnvironmentProtocol(value *string) error {
 	if value == nil {
-		return nil, nil
+		return nil
 	}
-	normalized := RleEnvironmentProtocol(strings.ToLower(strings.TrimSpace(string(*value))))
-	if normalized == "" {
-		return nil, nil
+	normalized := strings.ToLower(strings.TrimSpace(*value))
+	if normalized == "" || normalized == deprecatedMcpEnvironmentProtocol {
+		return nil
 	}
-	if normalized != RleEnvironmentProtocolMcpEnvironment {
-		return nil, localError(
-			fmt.Sprintf("The environment protocol must be %q.", RleEnvironmentProtocolMcpEnvironment),
-			"rle_manifest_environment_protocol_invalid",
-			fmt.Sprintf(
-				"Set rle.environmentProtocol = %q, or remove it to publish the legacy protocol.",
-				RleEnvironmentProtocolMcpEnvironment,
-			),
-		)
-	}
-	return &normalized, nil
+	return localError(
+		fmt.Sprintf("The environment protocol must be %q if it is set.", deprecatedMcpEnvironmentProtocol),
+		"rle_manifest_environment_protocol_invalid",
+		"Remove environment_protocol from rle.toml; RLE always uses the MCP environment protocol.",
+	)
 }
-
 func normalizeRequiredAgentField(value *string, fieldName string, maximumLength int, requiredCode string) (string, error) {
 	if value == nil || strings.TrimSpace(*value) == "" {
 		return "", localError(
